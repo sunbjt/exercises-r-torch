@@ -1,0 +1,780 @@
+# 08 循环网络 {.unnumbered}
+
+本章从循环单元的状态更新出发，依次讨论 BPTT 的梯度问题、LSTM/GRU 的门控、`nn_lstm` 的张量形状、连续型时间序列、变长文本的 Padding/Packing，以及 IMDB 情感分析和 Seq2Seq 雏形。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：参数共享、BPTT 雅可比、LSTM/GRU 参数量、双向 LSTM 的形状与读取。
+- 编程实践（练习 4–6）：手写 RNN 与 `nn_rnn` 对齐、梯度裁剪的几何、变长序列的掩码池化。
+- 开放思考（练习 7）：IMDB 模型设计、冻结词向量、过拟合诊断与截断策略。
+- 纠错与陷阱（练习 8）：`batch_first` 静默错位、`h_n` 被 padding 污染、GRU 门控约定、R 与 Python 的维度索引差异。
+
+建议用时约 3～3.5 小时。练习 1、2、4、8 可以先做；练习 6 需要实际构造张量，练习 7 可以结合自己的文本或时序数据展开。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过，固定种子后你的结果应当接近；凡是写“约”的地方，不必逐位对齐。
+
+## 一、概念与推导
+
+### 练习 1：参数共享、展开深度与 BPTT
+
+考虑下面这个单层 RNN 加一个输出层：
+
+```r
+rnn <- nn_rnn(input_size = 3, hidden_size = 10, batch_first = TRUE)
+fc  <- nn_linear(10, 1)
+```
+
+请回答：
+
+- （a） 列出 `nn_rnn` 的四个参数矩阵/向量的形状和数量，并计算整个模型的参数量。书中手写版 `rnn_model`（`Wxh` 为带偏置的 3→10 线性层，`Whh` 为不带偏置的 10→10 线性层，`Why` 为 10→1）有多少参数？两者为什么相差 10 个参数？
+- （b） 把序列长度从 $T=5$ 改成 $T=500$，参数量、计算图和反向传播的内存各自如何变化？为什么说 RNN 的“深度”不是由层数单独决定的？
+- （c） 写出 $h_t$ 的状态更新方程，并求雅可比矩阵 $\partial h_t/\partial h_{t-1}$。为什么同一个 $W_{hh}$ 会在梯度连乘中出现 $T-k$ 次？
+- （d） 忽略 tanh 导数，若 $W_{hh}$ 的谱半径为 $0.9$，从 $t=k$ 到 $t=T$ 相隔 100 步，梯度大约缩放多少倍？若谱半径为 $1.1$ 呢？这个估计为什么只是数量级上的参考？
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a）参数数量。
+
+| 参数 | 形状 | 数量 |
+| :--- | :--- | ---: |
+| `weight_ih_l1` | $[10,3]$ | $10\cdot3=30$ |
+| `weight_hh_l1` | $[10,10]$ | $10\cdot10=100$ |
+| `bias_ih_l1` | $[10]$ | $10$ |
+| `bias_hh_l1` | $[10]$ | $10$ |
+| 小计 | | 150 |
+| `fc.weight` | $[1,10]$ | $10$ |
+| `fc.bias` | $[1]$ | $1$ |
+| 合计 | | 161 |
+
+书中手写版：
+
+$$
+\underbrace{(3\cdot10+10)}_{W_{xh}\text{，带偏置}}
++\underbrace{10\cdot10}_{W_{hh}\text{，无偏置}}
++\underbrace{(10\cdot1+1)}_{W_{hy}}
+=40+100+11=151.
+$$
+
+两者相差 10，正好是 `bias_hh_l1`。手写版把输入偏置和隐藏偏置合并成了一个 `Wxh` 的偏置，并让 `Whh` 不带偏置；`nn_rnn` 则保留 PyTorch 的两个偏置。令 `bias_hh_l1` 全为 0，两者就严格等价。
+
+（b）序列长度的影响。
+
+参数量完全不变：$W_{ih},W_{hh},b_{ih},b_{hh}$ 在所有时间步共享。变化的是计算图和激活值：
+
+- 前向计算量约为 $O(T)$ 次矩阵乘法；
+- 按时间展开的计算图有 $O(T)$ 个节点；
+- 标准 BPTT 需要保存每个时间步的中间激活，反向内存约为 $O(T)$。
+
+所以“层数”只描述空间上的堆叠；RNN 的有效深度还包括时间维度。$T=500$ 的单层 RNN，反向传播要穿过 500 个“层”。工程上常用截断 BPTT（truncated BPTT）把序列切成短段，牺牲一部分长程梯度来换取内存和稳定性。
+
+（c）雅可比矩阵。
+
+状态更新为
+
+$$
+a_t=W_{ih}x_t+b_{ih}+W_{hh}h_{t-1}+b_{hh},\qquad
+h_t=\tanh(a_t).
+$$
+
+因此
+
+$$
+\frac{\partial h_t}{\partial h_{t-1}}
+=\operatorname{diag}\bigl(1-h_t^2\bigr)\,W_{hh}.
+$$
+
+从 $k$ 到 $T$：
+
+$$
+\frac{\partial h_T}{\partial h_k}
+=\prod_{t=k+1}^{T}
+\operatorname{diag}\bigl(1-h_t^2\bigr)W_{hh}.
+$$
+
+同一个 $W_{hh}$ 在每个时间步都被复用，所以在连乘中出现了 $T-k$ 次；这正是参数共享在反向传播中的代价。
+
+（d）谱半径的数量级。
+
+忽略 tanh 导数，连乘大致按 $\rho^{T-k}$ 缩放：
+
+$$
+0.9^{100}\approx 2.66\times10^{-5},\qquad
+1.1^{100}\approx 1.38\times10^{4}.
+$$
+
+前者在 100 步内衰减约 4.6 个数量级，后者放大四个数量级。tanh 的导数 $1-h_t^2\le 1$ 只会让衰减更快，不会挽救消失。
+
+这个估计只是数量级参考：真实梯度还受 tanh 导数、输入分布、矩阵非正交性影响；非正规矩阵（non-normal matrix）即使谱半径小于 1，也可能在短期内先增长再衰减。严格判断需要看完整的雅可比乘积，而不是只看最大特征值。
+
+:::
+
+### 练习 2：LSTM 门控、参数量与梯度高速公路
+
+请回答：
+
+- （a） 写出 LSTM 的遗忘门、输入门、候选细胞状态和输出门四个公式，并指出哪些用 sigmoid、哪些用 tanh，为什么这样选。
+- （b） 计算 `nn_lstm(input_size = 10, hidden_size = 20, num_layers = 2, batch_first = TRUE, bidirectional = TRUE)` 的参数量。把 LSTM 换成 `nn_gru`、其余配置不变，参数量是多少？解释两者之比为什么接近 $4:3$。
+- （c） 从 $C_t=f_t\odot C_{t-1}+i_t\odot\tilde C_t$ 出发，写出 $\partial C_t/\partial C_{t-1}$。为什么说 $f_t\approx1$ 时存在“梯度高速公路”？这是否意味着 LSTM 永远不会梯度消失？
+- （d） `nn_lstm(..., dropout = 0.2)` 在 `num_layers = 1` 时会发生什么？如果只有一层 LSTM，想加正则化应该怎么做？
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a）四个门。
+
+$$
+\begin{aligned}
+f_t &= \sigma\bigl(W_f[h_{t-1},x_t]+b_f\bigr),\\
+i_t &= \sigma\bigl(W_i[h_{t-1},x_t]+b_i\bigr),\\
+\tilde C_t &= \tanh\bigl(W_C[h_{t-1},x_t]+b_C\bigr),\\
+o_t &= \sigma\bigl(W_o[h_{t-1},x_t]+b_o\bigr),\\
+C_t &= f_t\odot C_{t-1}+i_t\odot\tilde C_t,\\
+h_t &= o_t\odot\tanh(C_t).
+\end{aligned}
+$$
+
+三个门用 sigmoid，是因为门的语义是“通过比例”，需要落在 $(0,1)$；候选状态用 tanh，是因为它要往细胞状态里写入可正可负的增量，值域 $(-1,1)$ 能让状态保持中心化。输出门仍用 sigmoid 控制比例，最后再对 $C_t$ 做一次 tanh，把幅值压回 $(-1,1)$。
+
+（b）参数量。
+
+对每个方向、每一层，LSTM 有 4 组“输入到隐藏 + 隐藏到隐藏”的仿射变换，每组包含 $H(I+H)$ 个权重和 $2H$ 个偏置（`bias_ih` 与 `bias_hh`）：
+
+$$
+4H(I+H+2).
+$$
+
+第一层 $I=10,H=20$：
+
+$$
+4\cdot20\cdot(10+20+2)=80\cdot32=2{,}560.
+$$
+
+第二层输入是上一层的双向输出，$I=40$：
+
+$$
+4\cdot20\cdot(40+20+2)=80\cdot62=4{,}960.
+$$
+
+双向再乘 2：
+
+$$
+2\times(2{,}560+4{,}960)=15{,}040.
+$$
+
+GRU 只有重置门、更新门和候选状态 3 组：
+
+$$
+3H(I+H+2),
+$$
+
+第一层 $60\cdot32=1{,}920$，第二层 $60\cdot62=3{,}720$，双向合计
+
+$$
+2\times(1{,}920+3{,}720)=11{,}280.
+$$
+
+两者之比为 $15{,}040/11{,}280\approx1.333$，正好是 $4:3$，因为偏置项相对权重很小，参数量主要由门数决定。
+
+（c）梯度高速公路。
+
+把 $f_t,i_t,\tilde C_t$ 都看成 $h_{t-1}$ 的函数，链式法则给出
+
+$$
+\frac{\partial C_t}{\partial C_{t-1}}
+=\operatorname{diag}(f_t)
++\operatorname{diag}(C_{t-1})\frac{\partial f_t}{\partial C_{t-1}}
++\operatorname{diag}(\tilde C_t)\frac{\partial i_t}{\partial C_{t-1}}
++\operatorname{diag}(i_t)\frac{\partial \tilde C_t}{\partial C_{t-1}}.
+$$
+
+第一项 $\operatorname{diag}(f_t)$ 是“直达”路径：它不含 $W_{hh}$ 的连乘，只逐元素乘遗忘门。若 $f_t\approx1$，这一项接近恒等映射，梯度可以沿细胞状态几乎无损地回传，这就是“高速公路”的来源。
+
+但这不是“永不消失”的保证：
+
+- $f_t$ 本身由 $h_{t-1}$ 经 sigmoid 得到，会随输入变化；连续多步 $f_t<1$ 仍会让乘积衰减；
+- 其余三项通过 $h_{t-1}=o_{t-1}\odot\tanh(C_{t-1})$ 回传，带有 $\tanh'$ 和权重矩阵；
+- 输出 $h_t$ 还要经过 $o_t\odot\tanh(C_t)$，分类头看到的是 $h_t$，不是 $C_t$。
+
+所以 LSTM 是把梯度衰减“显著放缓”，而不是把它变成恒等。
+
+（d）单层 LSTM 的 dropout。
+
+`nn_lstm` 的 `dropout` 参数只在层与层之间插入 Dropout；`num_layers = 1` 时没有“层间”，因此该参数不生效（PyTorch 会给出警告）。如果只有一层，可以在 LSTM 输出后、全连接层前显式加 `nn_dropout()`，或者对输入做 dropout；也可以堆到两层再使用层间 dropout。注意不要用普通的 dropout 直接随机丢弃细胞状态，那会破坏 LSTM 的记忆机制。
+
+:::
+
+### 练习 3：双向 LSTM 的形状与读取
+
+设
+
+```r
+lstm <- nn_lstm(
+  input_size = 10, hidden_size = 20,
+  num_layers = 2, batch_first = TRUE, bidirectional = TRUE
+)
+x <- torch_randn(3, 5, 10)   # batch = 3, seq = 5, feature = 10
+```
+
+请回答：
+
+- （a） 写出 `output`、`h_n`、`c_n` 的形状，并说明每一维的含义。
+- （b） 如果改成 `batch_first = FALSE`，输入应写成什么形状？输出、`h_n` 的形状又是什么？若误把 `[3,5,10]` 直接喂给 `batch_first = FALSE` 的单层 LSTM，会报错吗？实际会得到什么形状？
+- （c） 对二分类任务，若只取“正向最后一步”和“反向最后一步”，应分别从 `output` 的哪一片取？它们与 `h_n` 的哪些切片相等？
+- （d） 为什么 `output[, 5, 21:40]` 不是反向方向的“最后一步”？反向方向的最后一步在时间轴的哪一端？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a）三个返回值的形状。
+
+| 返回值 | 形状 | 含义 |
+| :--- | :--- | :--- |
+| `output` | $[3,5,40]$ | 最后一层每个时间步的输出；$40=2\times20$ 是双向拼接 |
+| `h_n` | $[4,3,20]$ | 4 个方向-层组合：第 1 层正向、第 1 层反向、第 2 层正向、第 2 层反向 |
+| `c_n` | $[4,3,20]$ | 与 `h_n` 同形状的细胞状态 |
+
+注意 `h_n` 的第二维永远是 batch，与 `batch_first` 无关。
+
+（b）`batch_first = FALSE`。
+
+输入应为 $[5,3,10]$（seq, batch, feature）。此时：
+
+- `output`：$[5,3,40]$；
+- `h_n`、`c_n`：仍为 $[4,3,20]$。
+
+误把 $[3,5,10]$ 喂给 `batch_first = FALSE` 的单层 LSTM，不会报错：模型会把 3 当成序列长度、5 当成 batch，得到 `output` $[3,5,20]$、`h_n` $[1,5,20]$。这是循环网络最危险的 bug 之一——形状能对上，语义已经错了。若换成两层，`h_n` 会变成 $[2,5,20]$，但错误同样不会暴露。
+
+（c）分类向量的取法。
+
+对两层双向 LSTM：
+
+```r
+last_forward  <- output[, 5, 1:20]    # 正向最后一步，最后一层
+last_backward <- output[, 1, 21:40]   # 反向最后一步，最后一层
+```
+
+它们分别等于
+
+```r
+h_n[3, , ]   # 第 2 层正向
+h_n[4, , ]   # 第 2 层反向
+```
+
+因为 `output` 只包含最后一层；`h_n` 则保留所有层。若只想要一个分类向量，可以把两片拼接成 $[3,40]$，或者直接 `torch_cat(list(h_n[3,,], h_n[4,,]), dim = 2)`。
+
+（d）反向方向的“最后一步”。
+
+反向层从 $t=5$ 读到 $t=1$，它的计算终点是 $t=1$，所以“最后一步”的状态在 `output[, 1, 21:40]`，也就是 `h_n[4,,]`。`output[, 5, 21:40]` 是反向层在 $t=5$ 的输出，那是它读到的第一个 token，不是最终状态。随机初始化下这两片通常不相等（实测最大差约 $0.14$），不能混用。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：手写 RNN 与 `nn_rnn` 对齐
+
+下面的 `manual_rnn` 只保留状态更新，返回最后一个时间步的隐状态：
+
+```r
+manual_rnn <- nn_module(
+  "manual_rnn",
+  initialize = function(input_size, hidden_size) {
+    self$hidden_size <- hidden_size
+    self$Wxh <- nn_linear(input_size, hidden_size)
+    self$Whh <- nn_linear(hidden_size, hidden_size, bias = FALSE)
+  },
+  forward = function(x) {
+    B <- x$size(1)
+    T <- x$size(2)
+    h <- torch_zeros(B, self$hidden_size, device = x$device)
+    for (t in 1:T) {
+      h <- torch_tanh(self$Wxh(x[, t, ]) + self$Whh(h))
+    }
+    h
+  }
+)
+```
+
+请完成：
+
+- （a） 实例化 `manual_rnn(4, 5)` 和 `nn_rnn(4, 5, batch_first = TRUE)`，列出两者的参数名与形状，建立一一对应关系。
+- （b） 用 `torch_manual_seed(1)` 生成 $B=2,T=6$、输入维度 4 的随机张量；把手写模型的权重和偏置复制到 `nn_rnn`，令另一个偏置为 0，比较两者的 $h_T$。最大绝对误差是多少？
+- （c） 解释为什么复制权重时 `weight_ih_l1` 的形状是 $[5,4]$ 而不是 $[4,5]$。
+- （d） 如果希望手写版也保留两个偏置，应如何修改 `forward`？修改后参数量与 `nn_rnn` 是否一致？
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）参数对应关系。
+
+| `nn_rnn` | 手写版 | 形状 |
+| :--- | :--- | :--- |
+| `weight_ih_l1` | `Wxh$weight` | $[5,4]$ |
+| `weight_hh_l1` | `Whh$weight` | $[5,5]$ |
+| `bias_ih_l1` | `Wxh$bias` | $[5]$ |
+| `bias_hh_l1` | 无（设为 0） | $[5]$ |
+
+（b）对齐实验。
+
+```r
+library(torch)
+torch_manual_seed(1)
+
+input_size <- 4
+hidden_size <- 5
+B <- 2
+T <- 6
+x <- torch_randn(B, T, input_size)
+
+manual <- manual_rnn(input_size, hidden_size)
+official <- nn_rnn(input_size, hidden_size, batch_first = TRUE)
+
+with_no_grad({
+  official$weight_ih_l1$copy_(manual$Wxh$weight)
+  official$weight_hh_l1$copy_(manual$Whh$weight)
+  official$bias_ih_l1$copy_(manual$Wxh$bias)
+  official$bias_hh_l1$fill_(0)
+})
+
+h_manual <- manual(x)
+out <- official(x)
+h_official <- out[[2]]$squeeze(1)   # nn_rnn 的 h_n 是张量，不是 (h, c) 列表
+
+cat("h_manual:", paste(h_manual$shape, collapse = "x"), "\n")
+cat("h_official:", paste(h_official$shape, collapse = "x"), "\n")
+cat("max diff:", as.numeric((h_manual - h_official)$abs()$max()), "\n")
+```
+
+输出：
+
+```text
+h_manual: 2x5
+h_official: 2x5
+max diff: 0
+```
+
+两者完全一致。注意 `out[[2]]` 在 `nn_rnn` 中直接就是 $[1,B,H]$ 的 `h_n`；只有 `nn_lstm`/`nn_gru` 才需要再取 `[[1]]` 或直接作为张量处理（GRU 的 `h_n` 也是张量）。
+
+（c）为什么是 $[5,4]$。
+
+`nn_linear(in, out)` 的权重形状是 `[out, in]`，因为它是 $y=xW^\top+b$。`nn_rnn` 的 `weight_ih_l1` 沿用同一约定：行是隐藏单元，列是输入特征，所以是 $[H,I]=[5,4]$。如果按数学公式 $W_{ih}x$ 写成 $[I,H]$，复制时就会维度不匹配。
+
+（d）保留两个偏置。
+
+在 `initialize` 中给 `Whh` 加回偏置：
+
+```r
+self$Whh <- nn_linear(hidden_size, hidden_size, bias = TRUE)
+```
+
+并在 `forward` 中写
+
+```r
+h <- torch_tanh(self$Wxh(xt) + self$Whh(h))
+```
+
+此时手写版参数为 $40+110+11=161$，与 `nn_rnn` 加 `fc` 完全一致。若只比较 RNN 本体，则是 $150$ 对 $150$。
+
+:::
+
+### 练习 5：梯度裁剪的几何
+
+梯度裁剪常被当作“防止 RNN 爆炸”的工程技巧，但它对梯度向量做了什么，值得用手算确认。
+
+- （a） 令 $w=1$，损失 $L=(100w)^2$。求 $\partial L/\partial w$。分别用 `nn_utils_clip_grad_norm_(max_norm = 1)` 和 `nn_utils_clip_grad_value_(clip_value = 0.5)` 裁剪，裁剪后的梯度各是多少？
+- （b） 设梯度向量 $g=(3,4)$。按范数裁剪到 $\|g\|_2\le1$ 后得到什么向量？按数值裁剪到 $[-1,1]$ 后得到什么向量？两种裁剪对方向的影响有何不同？后者的夹角是多少？
+- （c） 在一个训练循环中，`zero_grad()`、`backward()`、裁剪、`optimizer$step()` 的正确顺序是什么？如果裁剪放在 `backward()` 之前会怎样？
+- （d） 梯度裁剪能解决梯度消失吗？它和“梯度爆炸导致 NaN”之间是什么关系？
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a）标量情形。
+
+$$
+L=(100w)^2=10{,}000w^2,\qquad
+\frac{\partial L}{\partial w}=20{,}000w=20{,}000.
+$$
+
+```r
+w <- torch_tensor(1, requires_grad = TRUE)
+loss <- (w * 100)^2
+loss$backward()
+w$grad
+# torch_tensor 20000
+
+nn_utils_clip_grad_norm_(list(w), max_norm = 1.0)
+w$grad
+# torch_tensor 1
+```
+
+数值裁剪：
+
+```r
+w2 <- torch_tensor(1, requires_grad = TRUE)
+((w2 * 100)^2)$backward()
+nn_utils_clip_grad_value_(list(w2), clip_value = 0.5)
+w2$grad
+# torch_tensor 0.5
+```
+
+（b）向量情形。
+
+$g=(3,4)$ 的范数为 $\sqrt{3^2+4^2}=5$。范数裁剪把它整体缩放：
+
+$$
+g' = g\cdot\frac{1}{5}=(0.6,0.8),
+$$
+
+方向不变，范数变为 1。数值裁剪则逐坐标截断：
+
+$$
+g''=(\operatorname{clip}(3,-1,1),\operatorname{clip}(4,-1,1))=(1,1).
+$$
+
+方向发生了改变。两者的夹角
+
+$$
+\cos\theta=\frac{(3,4)\cdot(1,1)}{5\sqrt2}
+=\frac{7}{5\sqrt2}\approx0.98995,
+$$
+
+即 $\theta\approx8.13^\circ$。范数裁剪是乘一个正标量，所以严格保方向；数值裁剪会独立改变每个坐标，可能旋转梯度，甚至把某些分量“压平”。
+
+（c）训练循环顺序。
+
+```r
+optimizer$zero_grad()          # 1. 清空上一轮梯度
+loss <- loss_fn(model(x), y)
+loss$backward()                # 2. 反向传播，累积梯度
+nn_utils_clip_grad_norm_(model$parameters, max_norm = 1.0)  # 3. 裁剪
+optimizer$step()               # 4. 更新参数
+```
+
+裁剪必须放在 `backward()` 之后、`step()` 之前，因为它修改的是 `.grad`。若放在 `backward()` 之前，梯度还没算出来，裁剪没有效果；若放在 `step()` 之后，参数已经用未裁剪的梯度更新过了。
+
+（d）能解决什么、不能解决什么。
+
+梯度裁剪只限制梯度范数的上界，防止“一步走太远”导致参数飞出数值范围或 NaN；它对梯度消失无能为力——梯度本来就只有 $10^{-8}$，裁剪到 1 并不会把它变大。消失要靠门控结构、残差连接、合适的初始化或更短的依赖路径。裁剪是“安全阀”，不是“发动机”。
+
+:::
+
+### 练习 6：变长序列的 Padding、`h_n` 污染与掩码池化
+
+构造三个变长序列：
+
+```r
+s1 <- torch_tensor(c(2, 3, 4), dtype = torch_long())  # 长度 3
+s2 <- torch_tensor(c(5, 6),    dtype = torch_long())  # 长度 2
+s3 <- torch_tensor(c(7),       dtype = torch_long())  # 长度 1
+lengths <- c(3L, 2L, 1L)
+```
+
+用 `nn_utils_rnn_pad_sequence(..., padding_value = 1)` 填充到 $[3,3]$，再依次经过 `nn_embedding(10, 5, padding_idx = 1)` 和 `nn_lstm(5, 10, batch_first = TRUE)`。
+
+请回答：
+
+- （a） 打印 `output` 和 `h_n` 的形状。对每条序列，比较 `h_n[1, i, ]` 与 `output[i, lengths[i], ]`，差值分别是多少？为什么短序列的 `h_n` 不等于最后一个有效 token 的输出？
+- （b） 分别计算“对所有 3 个时间步求平均”和“只对有效 token 求平均”的句向量，比较第 2、3 条序列的差异。哪种做法更合理？
+- （c） 一个常见写法是先乘 mask 再除以固定的 $T=3$。这与按真实长度求平均差多少？如果序列长度分布很偏，会带来什么偏差？
+- （d） Packing 本应解决填充计算和污染问题。请实际运行书中的 `nn_utils_rnn_pack_padded_sequence()` + `nn_lstm()` 组合，观察当前 torch 0.17.0 的行为。若不可用，应该用什么替代？
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a）形状与 `h_n` 污染。
+
+```r
+library(torch)
+torch_manual_seed(42)
+
+s1 <- torch_tensor(c(2, 3, 4), dtype = torch_long())
+s2 <- torch_tensor(c(5, 6),    dtype = torch_long())
+s3 <- torch_tensor(c(7),       dtype = torch_long())
+lengths <- c(3L, 2L, 1L)
+
+padded <- nn_utils_rnn_pad_sequence(
+  list(s1, s2, s3), batch_first = TRUE, padding_value = 1
+)
+
+emb  <- nn_embedding(10, 5, padding_idx = 1)
+lstm <- nn_lstm(5, 10, batch_first = TRUE)
+
+out    <- lstm(emb(padded))
+output <- out[[1]]          # [3, 3, 10]
+h_n    <- out[[2]][[1]]     # [1, 3, 10]
+
+cat("output:", paste(output$shape, collapse = "x"), "\n")  # 3x3x10
+cat("h_n:", paste(h_n$shape, collapse = "x"), "\n")        # 1x3x10
+
+for (i in 1:3) {
+  last_valid <- output[i, lengths[i], ]
+  cat(i, as.numeric((h_n[1, i, ] - last_valid)$abs()$max()), "\n")
+}
+```
+
+输出约为：
+
+```text
+1 0
+2 0.08538319
+3 0.1414045
+```
+
+第 1 条序列没有填充，`h_n` 正好等于最后一个有效 token 的状态；第 2、3 条序列在有效 token 之后还有 `<PAD>`，LSTM 仍然会处理这些位置并更新隐状态，所以 `h_n` 是“读完所有填充位之后”的状态，不是最后一个真实 token 的状态。即使 `padding_idx = 1` 让填充词的 embedding 为 0，LSTM 的偏置和门控仍会改变状态；填充位越多，污染越明显。
+
+（b）平均池化。
+
+```r
+mask <- torch_tensor(
+  matrix(c(1, 1, 1,
+           1, 1, 0,
+           1, 0, 0), nrow = 3, byrow = TRUE),
+  dtype = torch_float()
+)
+
+mean_all   <- output$mean(dim = 2)
+mean_valid <- (output * mask$unsqueeze(3))$sum(dim = 2) /
+  mask$sum(dim = 2)$unsqueeze(2)
+
+for (i in 1:3) {
+  cat(i,
+      "norm_all =", as.numeric(mean_all[i, ]$norm()),
+      "norm_valid =", as.numeric(mean_valid[i, ]$norm()),
+      "max diff =", as.numeric((mean_all[i, ] - mean_valid[i, ])$abs()$max()),
+      "\n")
+}
+```
+
+实测：
+
+| 序列 | `mean_all` 范数 | `mean_valid` 范数 | 最大差 |
+| :--- | ---: | ---: | ---: |
+| 1（长度 3） | 0.4277 | 0.4277 | 0 |
+| 2（长度 2） | 0.2862 | 0.2339 | 0.0363 |
+| 3（长度 1） | 0.3608 | 0.3260 | 0.0819 |
+
+`mean_all` 把填充位产生的状态也平均进去，短序列被稀释得更厉害。做情感分类时，这会让短评论的句向量系统性地偏向“填充状态”，而不是真实内容。应按有效长度求平均。
+
+（c）除以固定长度 $T$ 的偏差。
+
+```r
+mean_wrong <- (output * mask$unsqueeze(3))$sum(dim = 2) / 3
+```
+
+与 `mean_valid` 的差：第 2 条约 $0.0396$，第 3 条约 $0.1111$。因为分母用了 3 而不是真实长度，短序列的向量被整体缩小；序列越短，缩小越严重。若数据中短文本占比高，模型会学到“长度越短、向量越小”的伪相关，而不是语义。
+
+（d）Packing 在当前 R torch 中的行为。
+
+```r
+packed <- nn_utils_rnn_pack_padded_sequence(
+  emb(padded), lengths, batch_first = TRUE, enforce_sorted = TRUE
+)
+class(packed)
+# [1] "PackedSequence" "R6"
+
+lstm(packed)
+# Error: Expected a proper Tensor but got None
+# (or an undefined Tensor in C++) for argument #0 'self'
+```
+
+`PackedSequence` 对象可以构造出来，但 torch 0.17.0 的 `nn_lstm()`（以及 `nn_rnn()`、`nn_gru()`）不接受它，R 层的 `forward` 仍按普通张量处理。因此书中的 Packing 前向传播在当前环境无法直接复现。
+
+替代方案：
+
+1. Padding + mask：如本题，计算量没有省，但结果正确；这是当前 R torch 最稳妥的做法。
+2. 手写循环：按时间步处理，跳过超过该序列长度的位置；灵活但慢。
+3. 等待/升级 API：如果后续 torch 版本支持 `PackedSequence`，再改回 packing；升级后请先跑最小例子确认。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：IMDB 情感分析的设计取舍
+
+书中的 `IMDbLSTM` 结构是：
+
+```text
+Input -> Embedding -> BiLSTM -> Mean Pooling -> Dropout -> Linear -> Output
+```
+
+训练集准确率约 95%，验证集约 85%，第 5 个 epoch 早停；加载 GloVe 并冻结 embedding 后，验证集从 85% 提升到 87%。
+
+请讨论：
+
+- （a） 为什么用“对所有时间步求平均”而不是“取最后一个隐状态”？在变长文本中，这两种做法各自有什么问题？书中的实现是否已经处理了 padding？
+- （b） 双向 LSTM 带来了什么信息？它在推理阶段有什么代价？什么场景不适合双向？
+- （c） 冻结词向量与微调词向量各适合什么情况？GloVe 命中率 96.76%、验证集提升 2 个百分点，能否说明“预训练一定更好”？
+- （d） 训练 95%、验证 85% 的差距，可能是过拟合，也可能是别的原因。请给出至少 3 种诊断方法，并说明每种方法能排除什么。
+- （e） `max_len = 256` 覆盖了 69.18% 的评论。若改成 128 或 512，分别有什么利弊？截断位置会不会改变情感标签？
+- （f） 书中的预测函数用 `torch_tensor(input_ids)$unsqueeze(1)` 把长度为 256 的向量变成模型输入。这个形状在 R 中是什么？和 Python 的习惯有什么不同？
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a）平均池化 vs 最后隐状态。
+
+最后隐状态只保留“读完整个序列”的一个向量，长文本中早期信息容易被覆盖；在变长 batch 中，`h_n` 还会被填充位污染（练习 6 已量化）。平均池化把每个有效 token 的上下文向量都纳入，方差更小，对长文本更稳。
+
+但平均池化也有代价：它把序列当成“词袋”，弱化了顺序和局部组合；对于“not good”这类否定结构，平均可能把 not 的负面和 good 的正面抵消。BiLSTM 的输出已经带有上下文，所以平均比裸词向量好，但仍不是万能的。
+
+书中的 `torch_mean(output[[1]], dim = 2)` 对全部 256 个位置求平均，没有使用 mask；这是可以改进的地方。更稳妥的写法是按有效长度求平均（练习 6(b)），或者在 padding 后记录 `lengths` 并做 masked mean。
+
+（b）双向的收益与代价。
+
+双向 LSTM 同时读取上文和下文，能利用“后面的词”消解前面的歧义，例如“这部电影不怎么样，但结尾……”；对离线情感分类很有效。代价是：
+
+- 参数量和计算量约为单向的 2 倍；
+- 推理时必须先拿到完整序列，不能逐词流式输出；
+- 对实时语音、在线翻译的解码器、超长文档的流式处理不友好。
+
+如果任务要求低延迟流式推理，应使用单向 LSTM/GRU，或使用带缓存的双向模型分段处理。
+
+（c）冻结 vs 微调。
+
+冻结 embedding 适合：
+
+- 下游数据较少，微调容易过拟合；
+- 预训练语料与任务领域接近，词向量语义可迁移；
+- 训练资源有限，希望减少可训练参数。
+
+微调适合：
+
+- 下游数据充足；
+- 领域差异大（如医学、法律、社交媒体黑话），预训练词义不够用；
+- 需要任务特定的词表示。
+
+GloVe 命中率 96.76% 说明词表覆盖好，但“验证集 85→87”只是单次实验的结果，受随机种子、早停、超参数影响；不能据此断言“预训练一定更好”。严谨做法是固定种子、重复多次、报告均值与方差，并做消融（冻结 vs 微调 vs 随机初始化）。
+
+（d）95% vs 85% 的诊断。
+
+差距可能来自过拟合、训练/验证分布差异、标签噪声、长度分布差异，或验证集本身较小。可以：
+
+1. 学习曲线：同时画训练/验证损失和准确率；若验证损失在训练损失继续下降时回升，支持过拟合。
+2. 正则化消融：分别去掉/加强 dropout、weight decay、早停，观察验证指标；若加正则后 gap 缩小且验证不降，说明过拟合占比大。
+3. 误差分析：按评论长度、类别、词表外词比例分组看错误率；若错误集中在某一人群/长度段，更像分布或数据问题。
+4. 交叉验证/重复实验：换切分、换种子，估计验证指标的方差；若 85% 本身波动 ±2%，2 个百分点的提升可能不显著。
+5. 校准与置信度：看预测概率的可靠性；高置信度错误往往指向标签噪声。
+
+（e）截断长度的权衡。
+
+- `max_len = 128`：计算和内存更省，但会丢掉更长评论的后半段；如果情感线索常在结尾（“前面都很好，但是……”），截断可能直接翻转标签。
+- `max_len = 256`：覆盖约 69%，是计算与信息的折中；仍有 31% 被截断。
+- `max_len = 512`：覆盖更多长评论，但 padding 更多、显存/时间上升；对短评论浪费严重。
+
+截断位置很重要。简单截断只保留开头，可能丢掉结论；更稳的做法是“头 + 尾”截断（各取一半），或按句子边界截断。IMDB 评论常把结论放在最后，单纯保留前 256 个 token 是有风险的。
+
+（f）R 的 `unsqueeze(1)`。
+
+```r
+ids <- torch_randint(2, 100, 256, dtype = torch_long())
+ids$shape                 # 256
+ids$unsqueeze(1)$shape    # 1x256
+```
+
+在 R torch 中维度从 1 开始计数，`unsqueeze(1)` 在最前面插入一维，所以 $[256]\to[1,256]$，正好是 `(batch, seq)`。Python 的 `torch.unsqueeze(1)` 会把新维插到索引 1（第二维），得到 $[256,1]$；要得到 $[1,256]$ 应写 `unsqueeze(0)`。所以书中的代码在 R 里是对的，但直接翻译成 Python 会错——这是跨语言移植时常见的陷阱。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：四个循环网络 bug
+
+下面的代码片段都能运行，但语义可能是错的。请指出问题、解释症状并给出修正。
+
+- （a） 输入形状 $[3,5,10]$，模型 `nn_lstm(10, 20, batch_first = FALSE)`。代码不报错，`output` 和 `h_n` 的形状是什么？模型实际把哪一维当成了序列？
+- （b） 用练习 6 的 padding 数据，直接取 `h_n` 做分类。第 3 条序列的 `h_n` 与最后一个有效 token 的输出差多少？如果 batch 中长度差异很大，会怎样？
+- （c） 书中 GRU 的更新公式是 $h_t=(1-z_t)\odot h_{t-1}+z_t\odot\tilde h_t$，并说 $z_t\approx0$ 时保留旧状态。R torch 的 `nn_gru` 是否采用同一个约定？用一个最小例子验证。
+- （d） `nn_lstm(..., dropout = 0.2)` 在 `num_layers = 1` 时是否生效？`torch_tensor(1:256)$unsqueeze(1)` 在 R 和 Python 中分别是什么形状？
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a）`batch_first` 静默错位。
+
+```r
+x <- torch_randn(3, 5, 10)
+m <- nn_lstm(10, 20, batch_first = FALSE)
+o <- m(x)
+
+o[[1]]$shape        # 3x5x20
+o[[2]][[1]]$shape   # 1x5x20
+```
+
+模型把第一维 3 当成 `seq_len`、第二维 5 当成 `batch`，所以输出是 $[3,5,20]$，`h_n` 是 $[1,5,20]$。它没有报错，因为 3 和 5 都是合法维度；但每个“时间步”实际上是一个样本，时间关系完全错乱。
+
+修正：设置 `batch_first = TRUE`，或把输入转置成 $[5,3,10]$：
+
+```r
+m <- nn_lstm(10, 20, batch_first = TRUE)
+```
+
+（b）`h_n` 被 padding 污染。
+
+练习 6 的实测：第 3 条序列长度为 1，`h_n` 与 `output[3, 1, ]` 的最大差约 $0.1414$；第 2 条约 $0.0854$。`h_n` 是读完所有 3 个位置后的状态，后两个位置是 `<PAD>`。长度差异越大，污染越严重。
+
+修正：不要直接取 `h_n`。可以按 `lengths` 取每个样本最后一个有效位置：
+
+```r
+last_valid <- torch_stack(
+  lapply(1:3, function(i) output[i, lengths[i], ]),
+  dim = 1
+)
+```
+
+或者用 masked mean（练习 6(b)）。如果后续 torch 版本支持 PackedSequence，也可以用 packing，但在当前 0.17.0 下不可用。
+
+（c）GRU 的更新门约定。
+
+书中的公式：
+
+$$
+h_t=(1-z_t)\odot h_{t-1}+z_t\odot\tilde h_t,
+$$
+
+$z_t\approx0$ 时保留旧状态。PyTorch/R torch 的 `nn_gru` 采用的是互补约定：
+
+$$
+h_t=(1-z_t)\odot\tilde h_t+z_t\odot h_{t-1},
+$$
+
+$z_t\approx1$ 时保留旧状态。两者在数学上可以通过 $z\mapsto1-z$ 互换，但门的编号和偏置的含义相反。
+
+最小验证：
+
+```r
+g <- nn_gru(1, 1, batch_first = TRUE)
+with_no_grad({
+  g$weight_ih_l1$zero_()
+  g$weight_hh_l1$zero_()
+  g$bias_ih_l1$copy_(torch_tensor(c(0, 2, 0)))  # r=0, z=2, n=0
+  g$bias_hh_l1$zero_()
+})
+
+x  <- torch_zeros(1, 1, 1)
+h0 <- torch_ones(1, 1, 1)
+o  <- g(x, h0)
+as.numeric(o[[1]][1, 1, ])
+# 0.880797
+```
+
+$0.880797=\sigma(2)$，说明 PyTorch 的输出是 $z\odot h_{t-1}$（$z\approx1$ 保留旧状态），而不是书中的 $(1-z)\odot h_{t-1}$（那会得到 $0.1192$）。如果你按书中的 $z$ 去初始化 `nn_gru` 的偏置，门的方向会反。
+
+修正：阅读 API 时以 PyTorch 文档为准；若沿用书中的公式，显式写 $z'=1-z$ 再映射到 `nn_gru`。这不是数学错误，而是约定不一致，但在调参和可视化门控时会造成实质误解。
+
+（d）dropout 与 `unsqueeze`。
+
+`nn_lstm` 的 `dropout` 只作用在层与层之间；`num_layers = 1` 时没有层间连接，参数不生效（PyTorch 会警告）。若要正则化单层 LSTM，可在 LSTM 输出后加 `nn_dropout()`，或堆叠到两层。
+
+`torch_tensor(1:256)$unsqueeze(1)`：
+
+- R torch：$[256]\to[1,256]$，因为维度从 1 开始，`unsqueeze(1)` 在最前面插入；
+- Python torch：$[256]\to[256,1]$，因为 `unsqueeze(1)` 在第二维插入。
+
+所以书中的 `predict_sentiment()` 在 R 中形状正确；移植到 Python 时应改成 `unsqueeze(0)`。这也是“看起来像 bug、其实是语言差异”的典型例子。
+
+:::

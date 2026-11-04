@@ -1,0 +1,2082 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-Hans" xml:lang="zh-Hans"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>13 生成对抗网络 – 深度学习与生成式 AI：课后练习</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./14-diffusion-exercises.html" rel="next">
+<link href="./12-vae-exercises.html" rel="prev">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-c10c624cab4f32a71991352778f012ac.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "textbox",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "没有结果",
+    "search-matching-documents-text": "匹配的文档",
+    "search-copy-link-title": "复制搜索链接",
+    "search-hide-matches-text": "隐藏其它匹配结果",
+    "search-more-match-text": "更多匹配结果",
+    "search-more-matches-text": "更多匹配结果",
+    "search-clear-button-title": "清除",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "取消",
+    "search-submit-button-title": "提交",
+    "search-label": "搜索"
+  }
+}</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="theme.css">
+</head>
+
+<body class="nav-sidebar floating quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="./13-GAN-exercises.html">13 生成对抗网络</a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="搜索" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="./">深度学习与生成式 AI：课后练习</a> 
+        <div class="sidebar-tools-main">
+  <a href="" class="quarto-reader-toggle quarto-navigation-tool px-1" onclick="window.quartoToggleReader(); return false;" title="切换阅读器模式">
+  <div class="quarto-reader-toggle-btn">
+  <i class="bi"></i>
+  </div>
+</a>
+</div>
+    </div>
+      </div>
+        <div class="mt-2 flex-shrink-0 align-items-center">
+        <div class="sidebar-search">
+        <div id="quarto-search" class="" title="搜索"></div>
+        </div>
+        </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">使用说明</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./03-math-ml-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">03 自动微分</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./04-backforward-nn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">04 多层感知机</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./05-optimizer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">05 优化与训练动力学</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./06-regularization-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">06 工程化实验</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./07-convolution-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">07 卷积网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./08-rnn-lstm-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">08 循环网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./09-transformer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">09 Transformer</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./10-recsys-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">10 深度推荐模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./11-gnn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">11 图神经网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./12-vae-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">12 变分自编码器</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./13-GAN-exercises.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">13 生成对抗网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./14-diffusion-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">14 扩散模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./15-explainable-ai-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">15 解释性与诊断</span></a>
+  </div>
+</li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">本页目录</h2>
+   
+  <ul>
+  <li><a href="#一概念与推导" id="toc-一概念与推导" class="nav-link active" data-scroll-target="#一概念与推导">一、概念与推导</a>
+  <ul class="collapse">
+  <li><a href="#练习-1最优判别器js-散度与梯度消失" id="toc-练习-1最优判别器js-散度与梯度消失" class="nav-link" data-scroll-target="#练习-1最优判别器js-散度与梯度消失">练习 1：最优判别器、JS 散度与梯度消失</a></li>
+  <li><a href="#练习-2lsgan-的损失梯度与参数" id="toc-练习-2lsgan-的损失梯度与参数" class="nav-link" data-scroll-target="#练习-2lsgan-的损失梯度与参数">练习 2：LSGAN 的损失、梯度与参数</a></li>
+  <li><a href="#练习-3wasserstein-距离对偶形式与-lipschitz-约束" id="toc-练习-3wasserstein-距离对偶形式与-lipschitz-约束" class="nav-link" data-scroll-target="#练习-3wasserstein-距离对偶形式与-lipschitz-约束">练习 3：Wasserstein 距离、对偶形式与 Lipschitz 约束</a></li>
+  </ul></li>
+  <li><a href="#二编程实践" id="toc-二编程实践" class="nav-link" data-scroll-target="#二编程实践">二、编程实践</a>
+  <ul class="collapse">
+  <li><a href="#练习-4从零实现-lsgan并做三个诊断" id="toc-练习-4从零实现-lsgan并做三个诊断" class="nav-link" data-scroll-target="#练习-4从零实现-lsgan并做三个诊断">练习 4：从零实现 LSGAN，并做三个诊断</a></li>
+  <li><a href="#练习-5实现-wgan-gp-的梯度惩罚" id="toc-练习-5实现-wgan-gp-的梯度惩罚" class="nav-link" data-scroll-target="#练习-5实现-wgan-gp-的梯度惩罚">练习 5：实现 WGAN-GP 的梯度惩罚</a></li>
+  <li><a href="#练习-6dcgan-的形状参数量与设计选择" id="toc-练习-6dcgan-的形状参数量与设计选择" class="nav-link" data-scroll-target="#练习-6dcgan-的形状参数量与设计选择">练习 6：DCGAN 的形状、参数量与设计选择</a></li>
+  </ul></li>
+  <li><a href="#三开放思考" id="toc-三开放思考" class="nav-link" data-scroll-target="#三开放思考">三、开放思考</a>
+  <ul class="collapse">
+  <li><a href="#练习-7模式坍塌评价指标与模型取舍" id="toc-练习-7模式坍塌评价指标与模型取舍" class="nav-link" data-scroll-target="#练习-7模式坍塌评价指标与模型取舍">练习 7：模式坍塌、评价指标与模型取舍</a></li>
+  </ul></li>
+  <li><a href="#四纠错与陷阱" id="toc-四纠错与陷阱" class="nav-link" data-scroll-target="#四纠错与陷阱">四、纠错与陷阱</a>
+  <ul class="collapse">
+  <li><a href="#练习-8容易踩的坑" id="toc-练习-8容易踩的坑" class="nav-link" data-scroll-target="#练习-8容易踩的坑">练习 8：容易踩的坑</a></li>
+  </ul></li>
+  <li><a href="#进一步练习可选" id="toc-进一步练习可选" class="nav-link" data-scroll-target="#进一步练习可选">进一步练习（可选）</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">13 生成对抗网络</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>本章从极小极大博弈出发，经过 LSGAN 的最小二乘损失、WGAN 的 Wasserstein 距离与 Lipschitz 约束，最后落到 AnimeFace 头像的 DCGAN/WGAN-GP 实现。下面 8 道题按四类编排：</p>
+<ul>
+<li>概念与推导（练习 1–3）：最优判别器与 JS 散度；LSGAN 的损失、梯度与参数；Wasserstein 距离、对偶形式与 1-Lipschitz 约束。</li>
+<li>编程实践（练习 4–6）：从零实现 LSGAN 并做梯度/噪声诊断；实现 WGAN-GP 的梯度惩罚；核对 DCGAN 的形状与参数量。</li>
+<li>开放思考（练习 7）：模式坍塌、FID/IS、GAN 与 VAE/扩散模型的取舍，以及条件生成与 CycleGAN。</li>
+<li>纠错与陷阱（练习 8）：LSGAN 的 <span class="math inline">\(1/2\)</span>、<code>detach()</code>、Critic 中的 BatchNorm、梯度惩罚的 <code>batch_size</code>、训练/评估模式切换。</li>
+</ul>
+<p>建议用时约 3 小时。练习 1–3 可以在读正文时完成；练习 4、5 建议对照 <code>code/13_LSGAN.R</code>、<code>code/13_WGAN_Clipping.R</code>、<code>code/13_WGAN_GP.R</code> 逐行阅读；练习 6 需要手算一遍卷积形状。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过；GAN 训练对随机种子、设备和超参数很敏感，答案里的数字用于判断量级和趋势，不应当作唯一标准。</p>
+<section id="一概念与推导" class="level2">
+<h2 class="anchored" data-anchor-id="一概念与推导">一、概念与推导</h2>
+<section id="练习-1最优判别器js-散度与梯度消失" class="level3">
+<h3 class="anchored" data-anchor-id="练习-1最优判别器js-散度与梯度消失">练习 1：最优判别器、JS 散度与梯度消失</h3>
+<p>设真实分布为 <span class="math inline">\(p_d\)</span>，生成分布为 <span class="math inline">\(p_g\)</span>，判别器 <span class="math inline">\(D(x)\in(0,1)\)</span>。GAN 的极小极大目标是</p>
+<p><span class="math display">\[
+V(D,G)=\mathbb E_{x\sim p_d}\bigl[\log D(x)\bigr]
++\mathbb E_{z\sim p_z}\bigl[\log\bigl(1-D(G(z))\bigr)\bigr].
+\]</span></p>
+<ul>
+<li>（a） 固定 <span class="math inline">\(G\)</span>（从而固定 <span class="math inline">\(p_g\)</span>），逐点对 <span class="math inline">\(D(x)\)</span> 求导，证明最优判别器为 <span class="math display">\[
+D^*(x)=\frac{p_d(x)}{p_d(x)+p_g(x)}.
+\]</span></li>
+<li>（b） 令 <span class="math inline">\(m=(p_d+p_g)/2\)</span>，证明 <span class="math display">\[
+V(D^*,G)=-\log 4+2\,\mathrm{JS}(p_d\,\|\,p_g),
+\]</span> 其中 <span class="math inline">\(\mathrm{JS}(p\|q)=\frac12\mathrm{KL}(p\|m)+\frac12\mathrm{KL}(q\|m)\)</span>。</li>
+<li>（c） 当 <span class="math inline">\(p_g=p_d\)</span> 时，<span class="math inline">\(D^*\)</span>、<span class="math inline">\(\mathrm{JS}\)</span> 和 <span class="math inline">\(V\)</span> 各是多少？为什么均衡点的值不是 <span class="math inline">\(0\)</span>？</li>
+<li>（d） 若 <span class="math inline">\(p_d\)</span> 与 <span class="math inline">\(p_g\)</span> 的支撑集不相交，证明 <span class="math inline">\(\mathrm{JS}=\log 2\)</span>、<span class="math inline">\(V(D^*,G)=0\)</span>，并解释此时生成器参数 <span class="math inline">\(\theta_G\)</span> 的梯度为什么几乎为 <span class="math inline">\(0\)</span>。</li>
+<li>（e） 取 <span class="math inline">\(p_d=\mathcal N(0,1)\)</span>、<span class="math inline">\(p_g=\mathcal N(\delta,1)\)</span>，用数值积分填写下表，并解释“<span class="math inline">\(V\)</span> 趋近于 <span class="math inline">\(0\)</span>”为什么不是好消息。</li>
+</ul>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;"><span class="math inline">\(\delta\)</span></th>
+<th style="text-align: right;">0</th>
+<th style="text-align: right;">1</th>
+<th style="text-align: right;">2</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;">6</th>
+<th style="text-align: right;">8</th>
+<th style="text-align: right;">10</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><span class="math inline">\(\mathrm{JS}\)</span></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><span class="math inline">\(V\)</span></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+</tbody>
+</table>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-1-contents" aria-controls="callout-1" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 1 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-1" class="callout-1-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 对固定的 <span class="math inline">\(x\)</span>，目标中被 <span class="math inline">\(D(x)\)</span> 影响的只有</p>
+<p><span class="math display">\[
+p_d(x)\log D+p_g(x)\log(1-D).
+\]</span></p>
+<p>对 <span class="math inline">\(D\)</span> 求导并令其为零：</p>
+<p><span class="math display">\[
+\frac{p_d}{D}-\frac{p_g}{1-D}=0
+\;\Longrightarrow\;
+p_d(1-D)=p_gD
+\;\Longrightarrow\;
+D^*=\frac{p_d}{p_d+p_g}.
+\]</span></p>
+<p>当 <span class="math inline">\(p_d+p_g=0\)</span> 时该点几乎不会出现，<span class="math inline">\(D\)</span> 可任取；当 <span class="math inline">\(p_d=p_g=0\)</span> 时 <span class="math inline">\(D^*\)</span> 无定义，但不影响积分。</p>
+<p>（b） 由</p>
+<p><span class="math display">\[
+\frac{p_d}{p_d+p_g}=\frac12\cdot\frac{p_d}{m},
+\qquad
+\frac{p_g}{p_d+p_g}=\frac12\cdot\frac{p_g}{m},
+\]</span></p>
+<p>代入 <span class="math inline">\(V(D^*,G)\)</span>：</p>
+<p><span class="math display">\[
+\begin{aligned}
+V(D^*,G)
+&amp;=\int p_d\log\frac{p_d}{p_d+p_g}+p_g\log\frac{p_g}{p_d+p_g}\,dx\\
+&amp;=\int p_d\log\frac{p_d}{m}+p_g\log\frac{p_g}{m}\,dx
+-\log 2\int(p_d+p_g)\,dx\\
+&amp;=2\,\mathrm{JS}(p_d\|p_g)-2\log 2\\
+&amp;=-\log 4+2\,\mathrm{JS}(p_d\|p_g).
+\end{aligned}
+\]</span></p>
+<p>最后一步用了 <span class="math inline">\(\int p_d=\int p_g=1\)</span>，所以 <span class="math inline">\(\int(p_d+p_g)=2\)</span>，且 <span class="math inline">\(2\log2=\log4\)</span>。由于 <span class="math inline">\(\mathrm{JS}\ge0\)</span>，有 <span class="math inline">\(V\ge-\log4\)</span>。</p>
+<p>（c） 当 <span class="math inline">\(p_g=p_d\)</span> 时，<span class="math inline">\(D^*=p_d/(2p_d)=1/2\)</span>；<span class="math inline">\(m=p_d\)</span>，两个 KL 都为 <span class="math inline">\(0\)</span>，所以 <span class="math inline">\(\mathrm{JS}=0\)</span>；于是</p>
+<p><span class="math display">\[
+V(D^*,G)=-\log4\approx-1.386294.
+\]</span></p>
+<p>均衡点的值不是 <span class="math inline">\(0\)</span>，因为 <span class="math inline">\(V\)</span> 是“判别器给真实样本的对数似然 + 给假样本的对数似然”的期望：当 <span class="math inline">\(D=1/2\)</span> 时，每一项都是 <span class="math inline">\(\log(1/2)=-\log2\)</span>，两项加起来正好是 <span class="math inline">\(-\log4\)</span>。<span class="math inline">\(V=0\)</span> 对应的是判别器完美分开真假（见下一问），不是均衡。</p>
+<p>（d） 设 <span class="math inline">\(p_d\)</span> 的支撑集为 <span class="math inline">\(A\)</span>、<span class="math inline">\(p_g\)</span> 的支撑集为 <span class="math inline">\(B\)</span>，且 <span class="math inline">\(A\cap B=\varnothing\)</span>。则几乎处处</p>
+<p><span class="math display">\[
+D^*(x)=
+\begin{cases}
+1, &amp; x\in A,\\
+0, &amp; x\in B.
+\end{cases}
+\]</span></p>
+<p>于是</p>
+<p><span class="math display">\[
+V(D^*,G)=\int_A p_d\log1\,dx+\int_B p_g\log1\,dx=0.
+\]</span></p>
+<p>另一方面，在 <span class="math inline">\(A\)</span> 上 <span class="math inline">\(m=p_d/2\)</span>，故 <span class="math inline">\(\mathrm{KL}(p_d\|m)=\log2\)</span>；在 <span class="math inline">\(B\)</span> 上 <span class="math inline">\(m=p_g/2\)</span>，故 <span class="math inline">\(\mathrm{KL}(p_g\|m)=\log2\)</span>。因此</p>
+<p><span class="math display">\[
+\mathrm{JS}=\frac12\log2+\frac12\log2=\log2,
+\]</span></p>
+<p>与 <span class="math inline">\(V=-\log4+2\log2=0\)</span> 一致。</p>
+<p>此时，只要 <span class="math inline">\(G\)</span> 的参数发生一个小扰动后 <span class="math inline">\(p_g\)</span> 的支撑集仍然远离 <span class="math inline">\(A\)</span>，<span class="math inline">\(D^*\)</span> 就仍然是同一个“示性函数”，<span class="math inline">\(V\)</span> 恒等于 <span class="math inline">\(0\)</span>。因此 <span class="math inline">\(V\)</span> 对 <span class="math inline">\(\theta_G\)</span> 的导数在支撑集之间的开区域内恒为 <span class="math inline">\(0\)</span>。用参数化判别器时，若最后一层是 Sigmoid，假样本上的 <span class="math inline">\(D(G(z))\approx0\)</span>，Sigmoid 进入饱和区，<span class="math inline">\(\partial D/\partial\theta_G\)</span> 也趋于 <span class="math inline">\(0\)</span>，于是</p>
+<p><span class="math display">\[
+\frac{\partial}{\partial\theta_G}\log\bigl(1-D(G(z))\bigr)
+=-\frac{1}{1-D}\frac{\partial D}{\partial\theta_G}
+\]</span></p>
+<p>仍然趋于 <span class="math inline">\(0\)</span>。这就是“判别器太强 → 生成器梯度消失”的根源。</p>
+<p>顺带一提：实践中常用的非饱和损失 <span class="math inline">\(-\log D(G(z))\)</span> 在 <span class="math inline">\(D\approx0\)</span> 时梯度约为 <span class="math inline">\(-1/D\cdot\partial D/\partial\theta_G\)</span>，反而可能很大；它避开了这个饱和点，但也会带来数值不稳定。本章的极小极大形式用的是 <span class="math inline">\(\log(1-D)\)</span>，所以饱和问题成立。</p>
+<p>（e） 数值积分代码（用 log-sum-exp 避免尾部下溢）：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>js <span class="ot">&lt;-</span> <span class="cf">function</span>(d, <span class="at">n =</span> <span class="fl">4e6</span>) {</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  lo <span class="ot">&lt;-</span> <span class="fu">min</span>(<span class="sc">-</span><span class="dv">12</span>, d <span class="sc">-</span> <span class="dv">12</span>); hi <span class="ot">&lt;-</span> <span class="fu">max</span>(<span class="dv">12</span>, d <span class="sc">+</span> <span class="dv">12</span>)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  x  <span class="ot">&lt;-</span> <span class="fu">seq</span>(lo, hi, <span class="at">length.out =</span> n)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  lp <span class="ot">&lt;-</span> <span class="fu">dnorm</span>(x, <span class="dv">0</span>, <span class="dv">1</span>, <span class="at">log =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  lq <span class="ot">&lt;-</span> <span class="fu">dnorm</span>(x, d, <span class="dv">1</span>, <span class="at">log =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  mx <span class="ot">&lt;-</span> <span class="fu">pmax</span>(lp, lq)</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  lm <span class="ot">&lt;-</span> mx <span class="sc">+</span> <span class="fu">log</span>(<span class="fu">exp</span>(lp <span class="sc">-</span> mx) <span class="sc">+</span> <span class="fu">exp</span>(lq <span class="sc">-</span> mx)) <span class="sc">-</span> <span class="fu">log</span>(<span class="dv">2</span>)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  p <span class="ot">&lt;-</span> <span class="fu">exp</span>(lp); q <span class="ot">&lt;-</span> <span class="fu">exp</span>(lq); m <span class="ot">&lt;-</span> <span class="fu">exp</span>(lm)</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">sum</span>(<span class="fl">0.5</span> <span class="sc">*</span> p <span class="sc">*</span> <span class="fu">log</span>(p <span class="sc">/</span> m) <span class="sc">+</span> <span class="fl">0.5</span> <span class="sc">*</span> q <span class="sc">*</span> <span class="fu">log</span>(q <span class="sc">/</span> m)) <span class="sc">*</span> (x[<span class="dv">2</span>] <span class="sc">-</span> x[<span class="dv">1</span>])</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">4</span>, <span class="dv">6</span>, <span class="dv">8</span>, <span class="dv">10</span>)</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a><span class="fu">data.frame</span>(<span class="at">delta =</span> d,</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>           <span class="at">JS =</span> <span class="fu">sapply</span>(d, js),</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>           <span class="at">V  =</span> <span class="sc">-</span><span class="fu">log</span>(<span class="dv">4</span>) <span class="sc">+</span> <span class="dv">2</span> <span class="sc">*</span> <span class="fu">sapply</span>(d, js))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>参考结果：</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;"><span class="math inline">\(\delta\)</span></th>
+<th style="text-align: right;">0</th>
+<th style="text-align: right;">1</th>
+<th style="text-align: right;">2</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;">6</th>
+<th style="text-align: right;">8</th>
+<th style="text-align: right;">10</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><span class="math inline">\(\mathrm{JS}\)</span></td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.111421</td>
+<td style="text-align: right;">0.336831</td>
+<td style="text-align: right;">0.632720</td>
+<td style="text-align: right;">0.689298</td>
+<td style="text-align: right;">0.693054</td>
+<td style="text-align: right;">0.693146</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><span class="math inline">\(V\)</span></td>
+<td style="text-align: right;">-1.386294</td>
+<td style="text-align: right;">-1.163452</td>
+<td style="text-align: right;">-0.712632</td>
+<td style="text-align: right;">-0.120854</td>
+<td style="text-align: right;">-0.007698</td>
+<td style="text-align: right;">-0.000186</td>
+<td style="text-align: right;">-0.000002</td>
+</tr>
+</tbody>
+</table>
+<p><span class="math inline">\(\mathrm{JS}\)</span> 的上界是 <span class="math inline">\(\log2\approx0.693147\)</span>。当 <span class="math inline">\(\delta\ge4\)</span> 时，两个正态分布的支撑集已经几乎没有重叠，<span class="math inline">\(\mathrm{JS}\)</span> 基本饱和，<span class="math inline">\(V\)</span> 从下方趋近于 <span class="math inline">\(0\)</span>。但 <span class="math inline">\(V\)</span> 趋近于 <span class="math inline">\(0\)</span> 意味着判别器几乎完美：假样本上的 <span class="math inline">\(D(G(z))\approx0\)</span>，生成器损失 <span class="math inline">\(\log(1-D(G(z)))\approx0\)</span>，曲线是平的，梯度几乎为 <span class="math inline">\(0\)</span>。所以“<span class="math inline">\(V\)</span> 变大（更接近 <span class="math inline">\(0\)</span>）”并不表示生成器在进步，恰恰表示它收不到有效信号。WGAN 用 Wasserstein 距离替换 JS，正是为了在这种情况下仍然给出与距离成正比的梯度（见练习 3）。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-2lsgan-的损失梯度与参数" class="level3">
+<h3 class="anchored" data-anchor-id="练习-2lsgan-的损失梯度与参数">练习 2：LSGAN 的损失、梯度与参数</h3>
+<p>LSGAN 用最小二乘代替交叉熵。记 <span class="math inline">\(a\)</span> 为假样本标签、<span class="math inline">\(b\)</span> 为真样本标签、<span class="math inline">\(c\)</span> 为生成器希望假样本得到的分数。判别器和生成器的目标分别是</p>
+<p><span class="math display">\[
+L_D=\frac12\mathbb E_{x\sim p_d}\bigl[(D(x)-b)^2\bigr]
++\frac12\mathbb E_{z\sim p_z}\bigl[(D(G(z))-a)^2\bigr],
+\]</span></p>
+<p><span class="math display">\[
+L_G=\frac12\mathbb E_{z\sim p_z}\bigl[(D(G(z))-c)^2\bigr].
+\]</span></p>
+<ul>
+<li>（a） 固定 <span class="math inline">\(G\)</span>，逐点对 <span class="math inline">\(D(x)\)</span> 求导，证明 <span class="math display">\[
+D^*(x)=\frac{b\,p_d(x)+a\,p_g(x)}{p_d(x)+p_g(x)}.
+\]</span> 本章采用 <span class="math inline">\(a=0\)</span>、<span class="math inline">\(b=1\)</span>、<span class="math inline">\(c=1\)</span>。此时 <span class="math inline">\(D^*\)</span> 是什么？和标准 GAN 的最优判别器相同吗？</li>
+<li>（b） 本章的判别器最后一层没有 Sigmoid。假设有人保留 Sigmoid，即 <span class="math inline">\(D=\sigma(z)\)</span>，分别计算下面两种生成器损失对 logit <span class="math inline">\(z\)</span> 的梯度，并填写表格： <span class="math display">\[
+L_G^{\text{GAN}}=\log(1-\sigma(z)),
+\qquad
+L_G^{\text{LSGAN}}=(\sigma(z)-1)^2.
+\]</span> 再对比“线性输出”的 LSGAN：<span class="math inline">\(L_G=(D-1)^2\)</span>，在 <span class="math inline">\(D=0\)</span> 和 <span class="math inline">\(D=-10\)</span> 处对 <span class="math inline">\(D\)</span> 的梯度是多少？说明“去掉 Sigmoid”和“换成 MSE”哪一个是避免梯度消失的关键。</li>
+<li>（c） 本章 1D 玩具模型的生成器是 <code>nn_linear(5,64) → LeakyReLU(0.2) → nn_linear(64,1)</code>，判别器是 <code>nn_linear(1,64) → LeakyReLU(0.2) → nn_linear(64,1)</code>。分别计算两个网络的参数量（含偏置）。</li>
+<li>（d） 正文公式带 <span class="math inline">\(1/2\)</span>，但 <code>code/13_LSGAN.R</code> 的 <code>loss_d</code>、<code>loss_g</code> 都没有乘 <span class="math inline">\(1/2\)</span>。这对训练有影响吗？如果优化器从 RMSprop 换成 SGD，结论会变吗？</li>
+<li>（e） 如果把生成器目标改成 <span class="math inline">\(c=0\)</span>（即“让假样本的得分接近 0”），会发生什么？在 <span class="math inline">\(a=0,b=1\)</span> 的编码下，正确的 <span class="math inline">\(c\)</span> 应该是多少？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 2 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 对固定的 <span class="math inline">\(x\)</span>，只保留含 <span class="math inline">\(D(x)\)</span> 的项：</p>
+<p><span class="math display">\[
+\ell(D)=\frac12 p_d(x)(D-b)^2+\frac12 p_g(x)(D-a)^2.
+\]</span></p>
+<p>令 <span class="math inline">\(\ell'(D)=0\)</span>：</p>
+<p><span class="math display">\[
+p_d(D-b)+p_g(D-a)=0
+\;\Longrightarrow\;
+D(p_d+p_g)=b\,p_d+a\,p_g,
+\]</span></p>
+<p>所以</p>
+<p><span class="math display">\[
+D^*=\frac{b\,p_d+a\,p_g}{p_d+p_g}.
+\]</span></p>
+<p>取 <span class="math inline">\(a=0,b=1\)</span>，得</p>
+<p><span class="math display">\[
+D^*=\frac{p_d}{p_d+p_g},
+\]</span></p>
+<p>与标准 GAN 的最优判别器完全相同。区别不在 <span class="math inline">\(D^*\)</span>，而在把 <span class="math inline">\(D^*\)</span> 代回生成器目标后得到的散度不同。</p>
+<p>（b） 记 <span class="math inline">\(s=\sigma(z)\)</span>，则 <span class="math inline">\(s'=s(1-s)\)</span>。</p>
+<ul>
+<li>标准 GAN 的生成器损失 <span class="math inline">\(L=\log(1-s)\)</span>：</li>
+</ul>
+<p><span class="math display">\[
+\frac{dL}{dz}=\frac{-s'}{1-s}=\frac{-s(1-s)}{1-s}=-s.
+\]</span></p>
+<ul>
+<li>保留 Sigmoid 的 LSGAN：<span class="math inline">\(L=(s-1)^2\)</span>，</li>
+</ul>
+<p><span class="math display">\[
+\frac{dL}{dz}=2(s-1)s'=-2s(1-s)^2.
+\]</span></p>
+<p>数值如下（负号表示梯度方向指向 <span class="math inline">\(z\)</span> 增大）：</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: right;"><span class="math inline">\(z\)</span></th>
+<th style="text-align: right;"><span class="math inline">\(s=\sigma(z)\)</span></th>
+<th style="text-align: right;">GAN：<span class="math inline">\(d\log(1-s)/dz\)</span></th>
+<th style="text-align: right;">LSGAN+Sigmoid：<span class="math inline">\(d(s-1)^2/dz\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">-10</td>
+<td style="text-align: right;"><span class="math inline">\(4.540\times10^{-5}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(-4.540\times10^{-5}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(-9.079\times10^{-5}\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">-20</td>
+<td style="text-align: right;"><span class="math inline">\(2.061\times10^{-9}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(-2.061\times10^{-9}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(-4.122\times10^{-9}\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">-40</td>
+<td style="text-align: right;"><span class="math inline">\(4.248\times10^{-18}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(-4.248\times10^{-18}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(-8.497\times10^{-18}\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>两者都随 <span class="math inline">\(z\to-\infty\)</span> 指数衰减；在很远的区域，MSE 的梯度只是 GAN 的约两倍，仍然是 <span class="math inline">\(0\)</span> 的量级。所以仅仅把 BCE 换成 MSE、但保留 Sigmoid，并不能解决饱和。</p>
+<p>真正起作用的是把最后一层改成线性输出。此时 <span class="math inline">\(L=(D-1)^2\)</span>，</p>
+<p><span class="math display">\[
+\frac{dL}{dD}=2(D-1).
+\]</span></p>
+<p>在 <span class="math inline">\(D=0\)</span> 处梯度为 <span class="math inline">\(-2\)</span>；在 <span class="math inline">\(D=-10\)</span> 处梯度为 <span class="math inline">\(-22\)</span>。假样本离真实区域越远、<span class="math inline">\(D\)</span> 越负，梯度反而越大，不会饱和。换句话说：</p>
+<ul>
+<li>“MSE”改变的是损失的形状，让远离目标的样本受到更大的惩罚；</li>
+<li>“去掉 Sigmoid”改变的是输出是否饱和，让 <span class="math inline">\(D\)</span> 可以取任意实数。</li>
+</ul>
+<p>两者配合才有 LSGAN 的效果；只做前者，梯度仍然会被 Sigmoid 压扁。</p>
+<p>（c）</p>
+<p>生成器：</p>
+<ul>
+<li><code>nn_linear(5, 64)</code>：<span class="math inline">\(5\times64+64=384\)</span>；</li>
+<li><code>nn_linear(64, 1)</code>：<span class="math inline">\(64\times1+1=65\)</span>；</li>
+</ul>
+<p>总计 <span class="math inline">\(384+65=\mathbf{449}\)</span>。</p>
+<p>判别器：</p>
+<ul>
+<li><code>nn_linear(1, 64)</code>：<span class="math inline">\(1\times64+64=128\)</span>；</li>
+<li><code>nn_linear(64, 1)</code>：<span class="math inline">\(64\times1+1=65\)</span>；</li>
+</ul>
+<p>总计 <span class="math inline">\(128+65=\mathbf{193}\)</span>。</p>
+<p>可用下面的代码核对：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">sum</span>(<span class="fu">sapply</span>(netG<span class="sc">$</span>parameters, <span class="cf">function</span>(p) p<span class="sc">$</span><span class="fu">numel</span>()))  <span class="co"># 449</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sum</span>(<span class="fu">sapply</span>(netD<span class="sc">$</span>parameters, <span class="cf">function</span>(p) p<span class="sc">$</span><span class="fu">numel</span>()))  <span class="co"># 193</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（d） 设原始损失为 <span class="math inline">\(L\)</span>。把 <span class="math inline">\(L\)</span> 换成 <span class="math inline">\(L/2\)</span>，梯度也变成 <span class="math inline">\(g/2\)</span>。</p>
+<ul>
+<li>SGD：参数更新为 <span class="math inline">\(-\eta g/2\)</span>，等价于把学习率减半。会改变训练轨迹，需要重新调学习率。</li>
+<li>RMSprop：更新方向大致是 <span class="math display">\[
+\frac{g/2}{\sqrt{v/4+\epsilon}}
+=\frac{g}{\sqrt{v+4\epsilon}},
+\]</span> 其中 <span class="math inline">\(v\)</span> 是梯度平方的滑动平均。忽略 <span class="math inline">\(\epsilon\)</span> 时，<span class="math inline">\(1/2\)</span> 被分子和分母同时抵消，更新几乎不变；只有 <span class="math inline">\(\epsilon\)</span> 的相对作用变大，影响很小。</li>
+<li>Adam 同理，主要影响 <span class="math inline">\(\epsilon\)</span> 附近的数值行为。</li>
+</ul>
+<p>本章脚本用的是 RMSprop，所以漏写 <span class="math inline">\(1/2\)</span> 在数值上几乎无害；但它与正文公式不一致，读者换成 SGD 时会得到“有效学习率减半”的不同结果。严谨的做法是让公式与代码统一，或者在代码旁注明“这里省略了不影响优化方向的常数因子 <span class="math inline">\(1/2\)</span>”。</p>
+<p>（e） 若 <span class="math inline">\(a=0,b=1,c=0\)</span>，生成器最小化</p>
+<p><span class="math display">\[
+\mathbb E\bigl[D(G(z))^2\bigr],
+\]</span></p>
+<p>也就是把假样本的判别器输出往 <span class="math inline">\(0\)</span> 推。但判别器本身也在把假样本往 <span class="math inline">\(0\)</span> 推（<span class="math inline">\(a=0\)</span>），两者的目标变成“合作”而非对抗：生成器被奖励去产生更容易被识破的样本。训练会失去对抗信号，生成样本可能漂移到判别器打分低的区域（通常是数据支撑集之外），表现为发散或坍塌。</p>
+<p>在 <span class="math inline">\(a=0,b=1\)</span> 的 0/1 编码下，生成器应当把假样本推向真实标签，即 <span class="math inline">\(c=b=1\)</span>。如果采用 LSGAN 论文的另一套编码 <span class="math inline">\(a=-1,b=1,c=0\)</span>，则 <span class="math inline">\(c=0\)</span> 是正确的，因为此时假样本标签是 <span class="math inline">\(-1\)</span>，生成器要把假样本从 <span class="math inline">\(-1\)</span> 推向 <span class="math inline">\(0\)</span>，仍然是“向真实侧移动”。判断标准不是“<span class="math inline">\(c\)</span> 是否等于 <span class="math inline">\(0\)</span>”，而是“<span class="math inline">\(c\)</span> 是否在 <span class="math inline">\(a\)</span> 与 <span class="math inline">\(b\)</span> 之间、且靠近 <span class="math inline">\(b\)</span>”。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-3wasserstein-距离对偶形式与-lipschitz-约束" class="level3">
+<h3 class="anchored" data-anchor-id="练习-3wasserstein-距离对偶形式与-lipschitz-约束">练习 3：Wasserstein 距离、对偶形式与 Lipschitz 约束</h3>
+<ul>
+<li>（a） 写出 <span class="math inline">\(W_1(P,Q)\)</span> 的定义，并证明一维情形下 <span class="math display">\[
+W_1(P,Q)=\int_{-\infty}^{\infty}\bigl|F_P(t)-F_Q(t)\bigr|\,dt,
+\]</span> 其中 <span class="math inline">\(F_P,F_Q\)</span> 是累积分布函数。</li>
+<li>（b） 写出 Kantorovich–Rubinstein 对偶： <span class="math display">\[
+W_1(P,Q)=\sup_{\|f\|_L\le1}\Bigl(\mathbb E_P[f]-\mathbb E_Q[f]\Bigr).
+\]</span> 解释为什么必须有“<span class="math inline">\(1\)</span>-Lipschitz”约束；如果没有，会发生什么？</li>
+<li>（c） 设 <span class="math inline">\(P=\mathcal N(\mu_1,1)\)</span>、<span class="math inline">\(Q=\mathcal N(\mu_2,1)\)</span>，<span class="math inline">\(\delta=|\mu_1-\mu_2|\)</span>。用对偶形式和“平移耦合”证明 <span class="math inline">\(W_1=\delta\)</span>。填写下表，并与练习 1 的 JS 对比：</li>
+</ul>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;"><span class="math inline">\(\delta\)</span></th>
+<th style="text-align: right;">0</th>
+<th style="text-align: right;">1</th>
+<th style="text-align: right;">2</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;">6</th>
+<th style="text-align: right;">8</th>
+<th style="text-align: right;">10</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><span class="math inline">\(W_1\)</span></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><span class="math inline">\(\mathrm{JS}\)</span></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+<td style="text-align: right;"></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>（d） 若两个分布均值相同，但标准差分别为 <span class="math inline">\(1\)</span> 和 <span class="math inline">\(1.1\)</span>，<span class="math inline">\(W_1\)</span> 是多少？<span class="math inline">\(W_2\)</span> 是多少？这说明“均值相同”是否意味着 <span class="math inline">\(W_1=0\)</span>？</li>
+<li>（e） 比较 WGAN 的两种 Lipschitz 实现：权重剪裁与梯度惩罚。写出梯度惩罚的公式，并解释本章实测的“<span class="math inline">\(17.6\%\)</span> 权重恰好在边界、<span class="math inline">\(82.4\%\)</span> 在内部”以及“梯度范数均值 <span class="math inline">\(0.918\)</span>、中位数 <span class="math inline">\(1.125\)</span>”各说明了什么。</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 3 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） <span class="math inline">\(W_1\)</span> 的定义是</p>
+<p><span class="math display">\[
+W_1(P,Q)=\inf_{\gamma\in\Pi(P,Q)}
+\mathbb E_{(X,Y)\sim\gamma}\bigl[|X-Y|\bigr],
+\]</span></p>
+<p>其中 <span class="math inline">\(\Pi(P,Q)\)</span> 是所有边缘分布为 <span class="math inline">\(P\)</span> 和 <span class="math inline">\(Q\)</span> 的联合分布。</p>
+<p>一维公式的证明用恒等式</p>
+<p><span class="math display">\[
+|x-y|=\int_{-\infty}^{\infty}
+\bigl|\mathbf 1\{x&gt;t\}-\mathbf 1\{y&gt;t\}\bigr|\,dt.
+\]</span></p>
+<p>对任意耦合 <span class="math inline">\(\gamma\)</span> 取期望：</p>
+<p><span class="math display">\[
+\mathbb E_\gamma|x-y|
+=\int_{-\infty}^{\infty}
+\mathbb E_\gamma\bigl|\mathbf 1\{X&gt;t\}-\mathbf 1\{Y&gt;t\}\bigr|\,dt
+\ge\int_{-\infty}^{\infty}
+\bigl|P(X&gt;t)-P(Y&gt;t)\bigr|\,dt.
+\]</span></p>
+<p>把 <span class="math inline">\(P(X&gt;t)=1-F_P(t)\)</span>、<span class="math inline">\(P(Y&gt;t)=1-F_Q(t)\)</span> 代入，两个 <span class="math inline">\(1\)</span> 相消，得到下界 <span class="math inline">\(\int|F_P-F_Q|dt\)</span>。等号可以由单调耦合（分位数耦合）达到：令 <span class="math inline">\(X=F_P^{-1}(U)\)</span>、<span class="math inline">\(Y=F_Q^{-1}(U)\)</span>，同一个 <span class="math inline">\(U\)</span> 同时驱动两个变量，则两个示性函数在 <span class="math inline">\(t\)</span> 的每个区域同号，绝对值可以移到积分号外。因此</p>
+<p><span class="math display">\[
+W_1(P,Q)=\int|F_P(t)-F_Q(t)|\,dt.
+\]</span></p>
+<p>（b） Kantorovich–Rubinstein 对偶是</p>
+<p><span class="math display">\[
+W_1(P,Q)=\sup_{f\in\mathrm{Lip}_1}
+\Bigl(\mathbb E_{x\sim P}[f(x)]-\mathbb E_{y\sim Q}[f(y)]\Bigr),
+\]</span></p>
+<p>其中 <span class="math inline">\(\mathrm{Lip}_1=\{f:|f(x)-f(y)|\le|x-y|\}\)</span>。</p>
+<p>如果没有 Lipschitz 约束，取 <span class="math inline">\(f(x)=c\,x\)</span>，则 <span class="math inline">\(\mathbb E_P[f]-\mathbb E_Q[f]=c(\mu_P-\mu_Q)\)</span>。只要两个均值不同，令 <span class="math inline">\(c\to\infty\)</span> 就得到 <span class="math inline">\(+\infty\)</span>；上确界没有意义。约束 <span class="math inline">\(\|f\|_L\le1\)</span> 的作用是给“评分函数能有多陡”设上限，使得“把真实样本评高、假样本评低”的收益不会无限增长。WGAN 用神经网络参数化 <span class="math inline">\(f\)</span>（Critic），再通过权重剪裁、梯度惩罚或谱归一化来近似这个约束。</p>
+<p>（c） 取 <span class="math inline">\(f(x)=x\)</span>。它是 <span class="math inline">\(1\)</span>-Lipschitz 的（斜率为 <span class="math inline">\(1\)</span>），所以由对偶形式</p>
+<p><span class="math display">\[
+W_1(P,Q)\ge\mathbb E_P[X]-\mathbb E_Q[Y]=\mu_1-\mu_2=\delta
+\]</span></p>
+<p>（不妨设 <span class="math inline">\(\mu_1&gt;\mu_2\)</span>；若相反则取绝对值）。</p>
+<p>另一方面，构造耦合：令 <span class="math inline">\(X\sim P\)</span>，取 <span class="math inline">\(Y=X-\delta\)</span>，则 <span class="math inline">\(Y\sim\mathcal N(\mu_2,1)=Q\)</span>，且</p>
+<p><span class="math display">\[
+\mathbb E|X-Y|=\delta.
+\]</span></p>
+<p>由 <span class="math inline">\(W_1\)</span> 的定义（下确界）有 <span class="math inline">\(W_1\le\delta\)</span>。上下界相同，故 <span class="math inline">\(W_1=\delta\)</span>。</p>
+<p>数值表（<span class="math inline">\(W_1\)</span> 是精确值；JS 用练习 1 的数值积分）：</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;"><span class="math inline">\(\delta\)</span></th>
+<th style="text-align: right;">0</th>
+<th style="text-align: right;">1</th>
+<th style="text-align: right;">2</th>
+<th style="text-align: right;">4</th>
+<th style="text-align: right;">6</th>
+<th style="text-align: right;">8</th>
+<th style="text-align: right;">10</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><span class="math inline">\(W_1\)</span></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">10</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><span class="math inline">\(\mathrm{JS}\)</span></td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.111421</td>
+<td style="text-align: right;">0.336831</td>
+<td style="text-align: right;">0.632720</td>
+<td style="text-align: right;">0.689298</td>
+<td style="text-align: right;">0.693054</td>
+<td style="text-align: right;">0.693146</td>
+</tr>
+</tbody>
+</table>
+<p><span class="math inline">\(W_1\)</span> 随 <span class="math inline">\(\delta\)</span> 线性增长，而 JS 很快饱和在 <span class="math inline">\(\log2\)</span>。这就是 WGAN 在“支撑集几乎不重叠”时仍能提供有效梯度的原因：距离还在变大，梯度不会消失。</p>
+<p>（d） 用数值积分</p>
+<p><span class="math display">\[
+W_1=\int_{-\infty}^{\infty}
+\bigl|\Phi(x)-\Phi(x/1.1)\bigr|\,dx
+\approx 0.079788,
+\]</span></p>
+<p>其中 <span class="math inline">\(\Phi\)</span> 是标准正态 CDF。<span class="math inline">\(W_2\)</span> 对同均值、方差 <span class="math inline">\(\sigma_1^2,\sigma_2^2\)</span> 的高斯有简单形式</p>
+<p><span class="math display">\[
+W_2^2=(\mu_1-\mu_2)^2+(\sigma_1-\sigma_2)^2,
+\]</span></p>
+<p>所以这里 <span class="math inline">\(W_2=|1-1.1|=0.1\)</span>。</p>
+<p><span class="math inline">\(W_1\ne0\)</span>，因为两个分布的形状不同：标准差 <span class="math inline">\(1.1\)</span> 的分布更宽，CDF 在两侧有系统性的差异。均值相同只保证一阶矩相同，不保证分布相同。一般地 <span class="math inline">\(W_1\le W_2\)</span>，所以 <span class="math inline">\(0.0798&lt;0.1\)</span> 是合理的；<span class="math inline">\(W_2\)</span> 对尾部/方差差异更敏感，<span class="math inline">\(W_1\)</span> 更“稳健”但也更不敏感。</p>
+<p>（e） 权重剪裁：每次更新后把 Critic 的每个参数限制在 <span class="math inline">\([-c,c]\)</span>，本章 <span class="math inline">\(c=0.01\)</span>。它简单，但有两个问题：</p>
+<ol type="1">
+<li><span class="math inline">\(c\)</span> 太小会让 Critic 容量不足，很多权重被钉在边界，网络无法表达复杂的评分函数；</li>
+<li><span class="math inline">\(c\)</span> 太大则 Lipschitz 约束太弱，Wasserstein 估计不可靠。</li>
+</ol>
+<p>本章 10,000 步后的实测分布：约 10.9% 的权重恰好等于 <span class="math inline">\(+0.01\)</span>，6.7% 恰好等于 <span class="math inline">\(-0.01\)</span>，合计 17.6% 在边界；其余 82.4% 严格在内部；<span class="math inline">\(|w|\)</span> 的中位数约 0.00895，离边界很近。说明剪裁确实在起作用，而且大部分权重都被压到边界附近，Critic 的表达能力受到明显限制；但并非“所有参数都等于 <span class="math inline">\(\pm c\)</span>”，仍有约五分之一的参数在内部。</p>
+<p>梯度惩罚（WGAN-GP）：</p>
+<p><span class="math display">\[
+L_D=\mathbb E_{x\sim p_g}\bigl[C(x)\bigr]
+-\mathbb E_{x\sim p_d}\bigl[C(x)\bigr]
++\lambda\,\mathbb E_{\hat x}
+\left[\bigl(\|\nabla_{\hat x}C(\hat x)\|_2-1\bigr)^2\right],
+\]</span></p>
+<p>其中</p>
+<p><span class="math display">\[
+\hat x=\alpha x+(1-\alpha)G(z),\qquad \alpha\sim U(0,1).
+\]</span></p>
+<p>它不是把每个权重钉在某个范围，而是要求 Critic 在真实样本与假样本连线上的梯度范数接近 <span class="math inline">\(1\)</span>。这样既能约束 Lipschitz 常数，又不会硬性限制容量。</p>
+<p>本章 1D 玩具模型（<span class="math inline">\(\lambda=0.1\)</span>，10,000 步）在最后一步的 512 个插值样本上实测：梯度范数均值 0.918，中位数 1.125，未乘 <span class="math inline">\(\lambda\)</span> 的惩罚项约 0.016。均值小于 <span class="math inline">\(1\)</span>、中位数大于 <span class="math inline">\(1\)</span>，说明分布是偏斜的：超过一半的插值点梯度范数大于 <span class="math inline">\(1\)</span>，但少数非常小的范数把均值拉低了。惩罚项只有 <span class="math inline">\(0.016\)</span>，说明大部分点的 <span class="math inline">\((\|\nabla C\|-1)^2\)</span> 很小，约束是“软”的，不是精确的 <span class="math inline">\(1\)</span>-Lipschitz。这也提醒我们：GP 不是把 Critic 变成严格的 <span class="math inline">\(1\)</span>-Lipschitz 函数，而是用罚项鼓励它接近；<span class="math inline">\(\lambda\)</span> 太大或太小都会改变训练行为（见练习 5）。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="二编程实践" class="level2">
+<h2 class="anchored" data-anchor-id="二编程实践">二、编程实践</h2>
+<section id="练习-4从零实现-lsgan并做三个诊断" class="level3">
+<h3 class="anchored" data-anchor-id="练习-4从零实现-lsgan并做三个诊断">练习 4：从零实现 LSGAN，并做三个诊断</h3>
+<p>下面的骨架与 <code>code/13_LSGAN.R</code> 一致：真实数据为 <span class="math inline">\(\mathcal N(2,1)\)</span>，噪声为 5 维均匀分布，生成器和判别器都是“线性 → LeakyReLU → 线性”，判别器没有 Sigmoid。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(torch)</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">123</span>); <span class="fu">torch_manual_seed</span>(<span class="dv">123</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>get_real_data <span class="ot">&lt;-</span> <span class="cf">function</span>(n) <span class="fu">torch_randn</span>(n, <span class="dv">1</span>) <span class="sc">*</span> <span class="dv">1</span> <span class="sc">+</span> <span class="dv">2</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>Generator <span class="ot">&lt;-</span> <span class="fu">nn_module</span>(</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">initialize =</span> <span class="cf">function</span>() {</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>net <span class="ot">&lt;-</span> <span class="fu">nn_sequential</span>(</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_linear</span>(<span class="dv">5</span>, <span class="dv">64</span>), <span class="fu">nn_leaky_relu</span>(<span class="fl">0.2</span>), <span class="fu">nn_linear</span>(<span class="dv">64</span>, <span class="dv">1</span>))</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  },</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>  <span class="at">forward =</span> <span class="cf">function</span>(x) self<span class="sc">$</span><span class="fu">net</span>(x)</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>Discriminator <span class="ot">&lt;-</span> <span class="fu">nn_module</span>(</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">initialize =</span> <span class="cf">function</span>() {</span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>net <span class="ot">&lt;-</span> <span class="fu">nn_sequential</span>(</span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_linear</span>(<span class="dv">1</span>, <span class="dv">64</span>), <span class="fu">nn_leaky_relu</span>(<span class="fl">0.2</span>), <span class="fu">nn_linear</span>(<span class="dv">64</span>, <span class="dv">1</span>))</span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>  },</span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>  <span class="at">forward =</span> <span class="cf">function</span>(x) self<span class="sc">$</span><span class="fu">net</span>(x)</span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li>（a） 补全训练循环：每个 step 先更新判别器，再更新生成器；判别器的假样本分支必须 <code>detach()</code>；两个优化器都要在 <code>backward()</code> 前 <code>zero_grad()</code>。用 <code>nn_mse_loss()</code>，真/假标签分别为 <span class="math inline">\(1\)</span> 和 <span class="math inline">\(0\)</span>，生成器目标为 <span class="math inline">\(1\)</span>。</li>
+<li>（b） 训练 10,000 步，在第 1、1000、2500、5000、7500、10000 步各采样 5,000 个生成样本，记录均值和标准差。与下面的参考表比较，描述“先学均值、再学方差”的三阶段现象。</li>
+<li>（c） 故意去掉判别器假样本分支的 <code>$detach()</code>，运行到第一次 <code>backward()</code>。记录报错并解释：为什么判别器的反向传播会破坏生成器的计算图？</li>
+<li>（d） 故意注释掉判别器的 <code>optD$zero_grad()</code>（生成器保持正常），训练 3,000 步，比较生成样本的均值和标准差与正确版本的差异。解释梯度累加为什么会让结果偏离。</li>
+<li>（e） 用均匀噪声 <code>torch_rand</code> 训练完成后，分别用 <code>torch_rand</code> 和 <code>torch_randn</code> 各采样 5,000 个点，记录均值和标准差。解释为什么同一个生成器换一种噪声会“坏掉”。</li>
+</ul>
+<p>参考表（seed 123，10,000 步，每步 batch 512，采样 5,000 个点）：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: right;">step</th>
+<th style="text-align: right;">mean</th>
+<th style="text-align: right;">sd</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">-0.135726</td>
+<td style="text-align: right;">0.054292</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">1000</td>
+<td style="text-align: right;">1.446206</td>
+<td style="text-align: right;">0.250509</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">2500</td>
+<td style="text-align: right;">2.115996</td>
+<td style="text-align: right;">0.421501</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">5000</td>
+<td style="text-align: right;">2.064334</td>
+<td style="text-align: right;">1.040605</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">7500</td>
+<td style="text-align: right;">2.052377</td>
+<td style="text-align: right;">1.018640</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">10000</td>
+<td style="text-align: right;">1.994246</td>
+<td style="text-align: right;">0.977059</td>
+</tr>
+</tbody>
+</table>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 4 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 完整循环：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>netG <span class="ot">&lt;-</span> <span class="fu">Generator</span>()</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>netD <span class="ot">&lt;-</span> <span class="fu">Discriminator</span>()</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>optG <span class="ot">&lt;-</span> <span class="fu">optim_rmsprop</span>(netG<span class="sc">$</span>parameters, <span class="at">lr =</span> <span class="fl">5e-5</span>)</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>optD <span class="ot">&lt;-</span> <span class="fu">optim_rmsprop</span>(netD<span class="sc">$</span>parameters, <span class="at">lr =</span> <span class="fl">5e-5</span>)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>criterion <span class="ot">&lt;-</span> <span class="fu">nn_mse_loss</span>()</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>batch_size <span class="ot">&lt;-</span> <span class="dv">512</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>capture <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1000</span>, <span class="dv">2500</span>, <span class="dv">5000</span>, <span class="dv">7500</span>, <span class="dv">10000</span>)</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>record <span class="ot">&lt;-</span> <span class="fu">list</span>()</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (step <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">10000</span>) {</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>  real_data <span class="ot">&lt;-</span> <span class="fu">get_real_data</span>(batch_size)</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>  fake_data <span class="ot">&lt;-</span> <span class="fu">netG</span>(<span class="fu">torch_rand</span>(batch_size, <span class="dv">5</span>))</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>  <span class="co"># --- 判别器 ---</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>  loss_d <span class="ot">&lt;-</span> <span class="fu">criterion</span>(<span class="fu">netD</span>(real_data), <span class="fu">torch_ones</span>(batch_size, <span class="dv">1</span>)) <span class="sc">+</span></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>            <span class="fu">criterion</span>(<span class="fu">netD</span>(fake_data<span class="sc">$</span><span class="fu">detach</span>()), <span class="fu">torch_zeros</span>(batch_size, <span class="dv">1</span>))</span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>  optD<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>  loss_d<span class="sc">$</span><span class="fu">backward</span>()</span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>  optD<span class="sc">$</span><span class="fu">step</span>()</span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>  <span class="co"># --- 生成器 ---</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>  loss_g <span class="ot">&lt;-</span> <span class="fu">criterion</span>(<span class="fu">netD</span>(fake_data), <span class="fu">torch_ones</span>(batch_size, <span class="dv">1</span>))</span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>  optG<span class="sc">$</span><span class="fu">zero_grad</span>()</span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>  loss_g<span class="sc">$</span><span class="fu">backward</span>()</span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>  optG<span class="sc">$</span><span class="fu">step</span>()</span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> (step <span class="sc">%in%</span> capture) {</span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a>    <span class="fu">with_no_grad</span>({</span>
+<span id="cb4-30"><a href="#cb4-30" aria-hidden="true" tabindex="-1"></a>      v <span class="ot">&lt;-</span> <span class="fu">as.numeric</span>(<span class="fu">netG</span>(<span class="fu">torch_rand</span>(<span class="dv">5000</span>, <span class="dv">5</span>)))</span>
+<span id="cb4-31"><a href="#cb4-31" aria-hidden="true" tabindex="-1"></a>      record[[<span class="fu">as.character</span>(step)]] <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="at">mean =</span> <span class="fu">mean</span>(v), <span class="at">sd =</span> <span class="fu">sd</span>(v))</span>
+<span id="cb4-32"><a href="#cb4-32" aria-hidden="true" tabindex="-1"></a>    })</span>
+<span id="cb4-33"><a href="#cb4-33" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb4-34"><a href="#cb4-34" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb4-35"><a href="#cb4-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-36"><a href="#cb4-36" aria-hidden="true" tabindex="-1"></a><span class="fu">do.call</span>(rbind, record)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>关键点：</p>
+<ul>
+<li><code>fake_data</code> 同时用于 D 和 G。D 的分支写 <code>fake_data$detach()</code>，G 的分支写 <code>fake_data</code>，两者共享同一组生成样本但梯度图不同。</li>
+<li>D 的 <code>backward()</code> 只能看到 D 的参数和 <code>detach()</code> 后的假样本；G 的 <code>backward()</code> 才穿过 G 的计算图。</li>
+<li>两个 <code>zero_grad()</code> 必须分别调用：PyTorch 默认把新梯度累加到 <code>.grad</code> 上，不会自动清零。</li>
+</ul>
+<p>（b） 参考输出就是题干中的表。三个阶段与正文描述一致：</p>
+<ol type="1">
+<li>step 1：均值约 <span class="math inline">\(-0.14\)</span>、标准差约 <span class="math inline">\(0.054\)</span>，生成器刚初始化，输出挤在 <span class="math inline">\(0\)</span> 附近；</li>
+<li>step 1000–2500：均值迅速移动到 <span class="math inline">\(1.45\to2.12\)</span>，但标准差只有 <span class="math inline">\(0.25\to0.42\)</span>。生成器先学会“数据在 <span class="math inline">\(x=2\)</span> 附近”，即一阶矩，输出仍然是一条很窄的线；</li>
+<li>step 2500–10000：均值在 <span class="math inline">\(2\)</span> 附近小幅波动，标准差从 <span class="math inline">\(0.42\)</span> 增长到约 <span class="math inline">\(0.98\)</span>，分布逐渐变宽，接近真实分布 <span class="math inline">\(\mathcal N(2,1)\)</span>。</li>
+</ol>
+<p>这说明 GAN 的优化并不是同时匹配所有矩：判别器最容易提供“位置错了”的信号，所以均值先收敛；方差/形状的匹配更慢，需要更长的训练。到 10,000 步标准差仍略小于 <span class="math inline">\(1\)</span>（<span class="math inline">\(0.977\)</span>），说明还没有完全收敛。</p>
+<p>（c） 去掉 <code>$detach()</code> 后，第一次 D 的反向传播会沿着</p>
+<p><span class="math display">\[
+\text{loss}_D \to D(\text{fake}) \to \text{fake} \to G
+\]</span></p>
+<p>一直传到生成器，并在过程中释放（free）计算图中的中间张量。等接着算 G 的损失并调用 <code>loss_g$backward()</code> 时，它需要再次穿过同一张图，就会报：</p>
+<pre><code>RuntimeError: Trying to backward through the graph a second time
+(or directly access saved tensors after they have already been freed).</code></pre>
+<p><code>detach()</code> 的作用正是把假样本从 G 的计算图上“摘下来”，让 D 的反向传播只更新 D，不碰 G，也不释放 G 需要的中间结果。注意：即使没有报错（例如某些框架会保留图），让 D 的梯度流进 G 也是概念错误——判别器更新时不应该修改生成器的参数。</p>
+<p>（d） 注释掉 <code>optD$zero_grad()</code> 后，D 的梯度会在 step 之间累加：</p>
+<p><span class="math display">\[
+g_D^{(t)}=\sum_{s=1}^{t}\nabla_\theta L_D^{(s)}
+\]</span></p>
+<p>（严格说还受优化器状态影响）。于是 D 的更新方向变成“历史梯度的和”，而不是当前 batch 的梯度；RMSprop 的平方滑动平均也会被历史梯度污染。实测在 3,000 步时：</p>
+<ul>
+<li>正确版本：均值约 2.241，标准差约 0.538；</li>
+<li>漏写 <code>zero_grad()</code>：均值约 1.765，标准差约 0.246。</li>
+</ul>
+<p>漏写版本看起来也在训练，但均值偏小、方差明显不足，分布更窄。更隐蔽的是：如果只漏掉 G 的 <code>zero_grad()</code>，G 的梯度会累加，更新步长和方向都会漂移，但损失曲线未必立刻异常。所以“训练能跑”不等于“梯度正确”。</p>
+<p>（e） 实测（同一个训练好的生成器，采样 5,000 个点）：</p>
+<ul>
+<li>用训练时的 <code>torch_rand(5000, 5)</code>（均匀分布）：均值约 2.016，标准差约 1.011；</li>
+<li>用 <code>torch_randn(5000, 5)</code>（标准正态）：均值约 -1.307，标准差约 2.860。</li>
+</ul>
+<p>（与参考表中的 1.994/0.977 略有差异，因为这里重新抽了一组 5,000 个噪声；量级和结论不变。）</p>
+<p>生成器学到的映射是 <span class="math inline">\(G: [0,1)^5\to\mathbb R\)</span>。训练时它只见过 <span class="math inline">\([0,1)^5\)</span> 里的点；正态噪声会给出负数、大于 <span class="math inline">\(1\)</span> 的数，以及各维组合上的新区域，属于分布外输入。神经网络在训练分布外没有理由给出合理输出，所以生成样本整体偏移、方差失控。</p>
+<p>这不是“生成器坏了”，而是模型定义不一致：生成模型是</p>
+<p><span class="math display">\[
+p_g=(G)_\#p_z,
+\]</span></p>
+<p>噪声分布 <span class="math inline">\(p_z\)</span> 是模型的一部分。训练用 <span class="math inline">\(p_z\)</span>、采样也必须用同一个 <span class="math inline">\(p_z\)</span>；如果希望部署时用正态噪声，就应该训练时也用正态噪声（或至少做相应的重参数化）。正文的 LSGAN 用均匀噪声、WGAN 的代码片段却建议 <code>randn</code>，正是容易混淆的地方（见进一步练习第 2 条）。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-5实现-wgan-gp-的梯度惩罚" class="level3">
+<h3 class="anchored" data-anchor-id="练习-5实现-wgan-gp-的梯度惩罚">练习 5：实现 WGAN-GP 的梯度惩罚</h3>
+<p>WGAN-GP 的 Critic 损失为</p>
+<p><span class="math display">\[
+L_D=\mathbb E_{x\sim p_g}\bigl[C(x)\bigr]
+-\mathbb E_{x\sim p_d}\bigl[C(x)\bigr]
++\lambda\,\mathbb E_{\hat x}
+\left[\bigl(\|\nabla_{\hat x}C(\hat x)\|_2-1\bigr)^2\right],
+\qquad
+\hat x=\alpha x+(1-\alpha)G(z).
+\]</span></p>
+<ul>
+<li>（a） 实现 <code>calc_gradient_penalty(netC, real, fake, lambda)</code>，同时适用于 1D 数据 <code>[B,1]</code> 和图像 <code>[B,3,64,64]</code>。说明 <code>alpha</code> 的形状为什么要写成 <code>c(B, 1, ..., 1)</code>。</li>
+<li>（b） 解释 <code>autograd_grad(..., create_graph = TRUE, retain_graph = TRUE)</code> 的两个参数。如果 <code>create_graph = FALSE</code>，惩罚项还会训练 Critic 吗？如果 <code>retain_graph = FALSE</code>，可能报什么错？</li>
+<li>（c） <code>code/13_WGAN_GP.R</code> 在 <code>alpha_dims</code> 和 <code>gradients$view(c(batch_size, -1))</code> 里用了全局 <code>batch_size</code>。这会在什么情况下出错？给出修正。</li>
+<li>（d） 在同一 1D 设置（seed 123，RMSprop，lr <span class="math inline">\(5\times10^{-4}\)</span>，<code>n_critic = 5</code>，batch 512）下，比较 <span class="math inline">\(\lambda=0.1\)</span> 与 <span class="math inline">\(\lambda=10\)</span> 训练 5,000 步的生成样本均值和标准差。参考结果：<span class="math inline">\(\lambda=0.1\)</span> 为 <span class="math inline">\((1.7792, 0.9479)\)</span>，<span class="math inline">\(\lambda=10\)</span> 为 <span class="math inline">\((-1.2346, 0.5451)\)</span>。解释为什么“论文默认 <span class="math inline">\(\lambda=10\)</span>”不能直接照搬到这个小模型。</li>
+<li>（e） 在 <span class="math inline">\(\lambda=0.1\)</span> 的最后一步，统计 512 个插值样本的梯度范数：均值约 <span class="math inline">\(0.918\)</span>、中位数约 <span class="math inline">\(1.125\)</span>，未乘 <span class="math inline">\(\lambda\)</span> 的惩罚项约 <span class="math inline">\(0.016\)</span>。解释这三个数字为什么不矛盾，以及它们说明 GP 是“软约束”。</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 5 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-5" class="callout-5-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 一个通用实现：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>calc_gradient_penalty <span class="ot">&lt;-</span> <span class="cf">function</span>(netC, real, fake, <span class="at">lambda =</span> <span class="fl">0.1</span>) {</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>  B <span class="ot">&lt;-</span> real<span class="sc">$</span><span class="fu">size</span>(<span class="dv">1</span>)</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="co"># real 的形状是 [B, ...]；alpha 需要变成 [B, 1, ..., 1]</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  alpha_dims <span class="ot">&lt;-</span> <span class="fu">c</span>(B, <span class="fu">rep</span>(<span class="dv">1</span>, real<span class="sc">$</span><span class="fu">dim</span>() <span class="sc">-</span> <span class="dv">1</span>))</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  alpha <span class="ot">&lt;-</span> <span class="fu">torch_rand</span>(alpha_dims, <span class="at">device =</span> real<span class="sc">$</span>device)</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>  x_hat <span class="ot">&lt;-</span> (alpha <span class="sc">*</span> real <span class="sc">+</span> (<span class="dv">1</span> <span class="sc">-</span> alpha) <span class="sc">*</span> fake)<span class="sc">$</span><span class="fu">requires_grad_</span>(<span class="cn">TRUE</span>)</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>  score <span class="ot">&lt;-</span> <span class="fu">netC</span>(x_hat)</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>  grad <span class="ot">&lt;-</span> <span class="fu">autograd_grad</span>(</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>    <span class="at">outputs =</span> score,</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a>    <span class="at">inputs  =</span> x_hat,</span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>    <span class="at">grad_outputs =</span> <span class="fu">torch_ones_like</span>(score),</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>    <span class="at">create_graph =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>    <span class="at">retain_graph =</span> <span class="cn">TRUE</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a>  )[[<span class="dv">1</span>]]</span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a>  grad <span class="ot">&lt;-</span> grad<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, <span class="sc">-</span><span class="dv">1</span>))          <span class="co"># [B, 1] 或 [B, 3*64*64]</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a>  norm <span class="ot">&lt;-</span> grad<span class="sc">$</span><span class="fu">norm</span>(<span class="dv">2</span>, <span class="at">dim =</span> <span class="dv">2</span>)        <span class="co"># 每个样本一个范数</span></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a>  gp <span class="ot">&lt;-</span> ((norm <span class="sc">-</span> <span class="dv">1</span>)<span class="sc">^</span><span class="dv">2</span>)<span class="sc">$</span><span class="fu">mean</span>()</span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>  lambda <span class="sc">*</span> gp</span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>alpha</code> 的形状必须是 <code>[B, 1, 1, ..., 1]</code>，这样才能和 <code>[B, C, H, W]</code> 的 <code>real</code>/<code>fake</code> 广播：每个样本一个标量 <span class="math inline">\(\alpha_i\)</span>，同一个 <span class="math inline">\(\alpha_i\)</span> 广播到该样本的所有通道和像素。如果写成 <code>[B]</code>，R torch 会把它当成最后一维，和 <code>[B,C,H,W]</code> 的最后一维 <span class="math inline">\(W\)</span> 对齐（或直接报错），语义就错了。</p>
+<p><code>grad$view(c(B, -1))</code> 把每个样本的梯度展平成一个向量，再沿第 2 维求 L2 范数，得到 <span class="math inline">\([B]\)</span> 的逐样本范数。GP 是“逐样本”的，不能先对所有元素求一个全局范数。</p>
+<p>（b）</p>
+<ul>
+<li><code>create_graph = TRUE</code>：在求梯度时同时建立“梯度的计算图”。这样 <code>gp</code> 仍然是 <code>netC</code> 参数的函数，<code>d_loss$backward()</code> 才能把梯度继续传回 Critic，惩罚项才会真正参与训练。若为 <code>FALSE</code>，<code>grad</code> 只是一个常数张量（<code>requires_grad = FALSE</code>），<code>gp</code> 对参数没有梯度；<code>d_loss$backward()</code> 仍可能正常运行（因为 <code>d_loss_original</code> 还有梯度），但惩罚项不起作用，Critic 不会被推向 <span class="math inline">\(1\)</span>-Lipschitz。</li>
+<li><code>retain_graph = TRUE</code>：<code>autograd_grad</code> 内部已经做过一次反向传播；保留前向图，后续对 <code>d_loss</code> 的 <code>backward()</code> 才能再次使用它。若为 <code>FALSE</code>，可能在第二次反向时遇到 “Trying to backward through the graph a second time” 或访问已释放张量的错误。实践中两个都设为 <code>TRUE</code>，代价是显存/内存更高。</li>
+</ul>
+<p>（c） 全局 <code>batch_size</code> 假设每个 batch 都恰好是 512。以下情况会破坏这个假设：</p>
+<ul>
+<li><code>drop_last = FALSE</code> 时，最后一个 batch 可能小于 512；</li>
+<li>训练结束后用 5,000 个样本做评估/画图，仍然调用同一个 <code>calc_gradient_penalty</code>；</li>
+<li>换数据或改 batch 大小时忘了同步修改全局变量。</li>
+</ul>
+<p>此时 <code>alpha_dims</code> 仍是 <code>c(512, 1)</code>，<code>x_hat</code> 的 batch 维却是 <span class="math inline">\(B'\ne512\)</span>，广播会失败；<code>grad$view(c(512, -1))</code> 也会因为元素数不是 512 的整数倍而报 <code>shape '[512, -1]' is invalid for input of size ...</code>。修正很简单：所有形状都从输入张量读取，</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>B <span class="ot">&lt;-</span> real<span class="sc">$</span><span class="fu">size</span>(<span class="dv">1</span>)</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>alpha_dims <span class="ot">&lt;-</span> <span class="fu">c</span>(B, <span class="fu">rep</span>(<span class="dv">1</span>, real<span class="sc">$</span><span class="fu">dim</span>() <span class="sc">-</span> <span class="dv">1</span>))</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>grad <span class="ot">&lt;-</span> grad<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, <span class="sc">-</span><span class="dv">1</span>))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>本章的 DCGAN 脚本已经用了 <code>real_samples$size(1)</code>，而 1D 脚本仍然用全局 <code>batch_size</code>；后者只适合“固定 batch、从不在别处调用”的窄场景。</p>
+<p>（d） 参考结果（5,000 步）：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: right;"><span class="math inline">\(\lambda\)</span></th>
+<th style="text-align: right;">mean</th>
+<th style="text-align: right;">sd</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">0.1</td>
+<td style="text-align: right;">1.7792</td>
+<td style="text-align: right;">0.9479</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">-1.2346</td>
+<td style="text-align: right;">0.5451</td>
+</tr>
+</tbody>
+</table>
+<p><span class="math inline">\(\lambda=0.1\)</span> 时生成分布已经在 <span class="math inline">\(2\)</span> 附近，标准差接近 <span class="math inline">\(1\)</span>；<span class="math inline">\(\lambda=10\)</span> 时均值跑到 <span class="math inline">\(-1.23\)</span>，标准差只有 <span class="math inline">\(0.55\)</span>，训练明显失败。</p>
+<p>原因不是“<span class="math inline">\(\lambda=10\)</span> 一定错”，而是惩罚的相对强度取决于模型、数据尺度、优化器和学习率。在这个 1D 玩具模型里：</p>
+<ul>
+<li>Critic 很小（1→64→1），容量有限；</li>
+<li>数据是尺度为 <span class="math inline">\(1\)</span> 的一维正态，Wasserstein 信号本身很小；</li>
+<li>RMSprop 的学习率 <span class="math inline">\(5\times10^{-4}\)</span> 相对较大。</li>
+</ul>
+<p>把 <span class="math inline">\(\lambda\)</span> 提高到 <span class="math inline">\(10\)</span> 后，梯度惩罚项在总损失中占主导，Critic 被强烈地推向“梯度范数处处为 <span class="math inline">\(1\)</span>”，它的评分差异（真正给生成器提供方向的 Wasserstein 信号）被压扁。生成器收到的梯度变弱且噪声大，于是偏离真实分布。<span class="math inline">\(\lambda=0.1\)</span> 让两项平衡，训练才稳定。</p>
+<p>WGAN-GP 论文的 <span class="math inline">\(\lambda=10\)</span> 是针对它的图像实验（Adam，lr <span class="math inline">\(10^{-4}\)</span>，Critic 容量更大）调的默认值，不是普适常数。实际使用时应把 <span class="math inline">\(\lambda\)</span> 当作需要验证的超参数，观察 Wasserstein 估计、梯度范数和样本质量，而不是盲抄。</p>
+<p>（e） 三个数字并不矛盾：</p>
+<ul>
+<li>中位数 <span class="math inline">\(1.125&gt;1\)</span>：超过一半的插值样本，梯度范数大于 <span class="math inline">\(1\)</span>；</li>
+<li>均值 <span class="math inline">\(0.918&lt;1\)</span>：分布右偏/左尾很长，少数非常小的范数把均值拉低；</li>
+<li>惩罚项 <span class="math inline">\(0.016\)</span>：它是 <span class="math inline">\((\|\nabla C\|-1)^2\)</span> 的平均，很多点接近 <span class="math inline">\(1\)</span>，平方后更小；即使少数点偏离较大，平均值仍可以很小。</li>
+</ul>
+<p>这说明 GP 是软约束：它最小化的是“偏离 <span class="math inline">\(1\)</span> 的平方的期望”，而不是硬性要求每个点的范数都等于 <span class="math inline">\(1\)</span>。在 ReLU 网络中，Critic 是分段线性函数，梯度在每个线性区域内部是常数，在区域边界会跳变；插值样本落在不同区域，范数自然有高有低。只要平均偏离不大，GP 就认为“够好了”。如果希望更强约束，可以增大 <span class="math inline">\(\lambda\)</span>、增加 Critic 容量或改用谱归一化；但过强的约束会压制 Wasserstein 信号（见上一问）。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-6dcgan-的形状参数量与设计选择" class="level3">
+<h3 class="anchored" data-anchor-id="练习-6dcgan-的形状参数量与设计选择">练习 6：DCGAN 的形状、参数量与设计选择</h3>
+<p>本章的 AnimeFace 生成器（<span class="math inline">\(n_z=100\)</span>，<code>ngf=64</code>）为：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="fu">nn_sequential</span>(</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv_transpose2d</span>(nz, ngf <span class="sc">*</span> <span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>),</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_batch_norm2d</span>(ngf <span class="sc">*</span> <span class="dv">8</span>), <span class="fu">nn_relu</span>(<span class="cn">TRUE</span>),</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv_transpose2d</span>(ngf <span class="sc">*</span> <span class="dv">8</span>, ngf <span class="sc">*</span> <span class="dv">4</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>),</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_batch_norm2d</span>(ngf <span class="sc">*</span> <span class="dv">4</span>), <span class="fu">nn_relu</span>(<span class="cn">TRUE</span>),</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv_transpose2d</span>(ngf <span class="sc">*</span> <span class="dv">4</span>, ngf <span class="sc">*</span> <span class="dv">2</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>),</span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_batch_norm2d</span>(ngf <span class="sc">*</span> <span class="dv">2</span>), <span class="fu">nn_relu</span>(<span class="cn">TRUE</span>),</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv_transpose2d</span>(ngf <span class="sc">*</span> <span class="dv">2</span>, ngf, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>),</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_batch_norm2d</span>(ngf), <span class="fu">nn_relu</span>(<span class="cn">TRUE</span>),</span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv_transpose2d</span>(ngf, <span class="dv">3</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>),</span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_tanh</span>()</span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>判别器为：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">nn_sequential</span>(</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv2d</span>(<span class="dv">3</span>, ndf, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>), <span class="fu">nn_leaky_relu</span>(<span class="fl">0.2</span>, <span class="at">inplace =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv2d</span>(ndf, ndf <span class="sc">*</span> <span class="dv">2</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>), <span class="fu">nn_leaky_relu</span>(<span class="fl">0.2</span>, <span class="at">inplace =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv2d</span>(ndf <span class="sc">*</span> <span class="dv">2</span>, ndf <span class="sc">*</span> <span class="dv">4</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>), <span class="fu">nn_leaky_relu</span>(<span class="fl">0.2</span>, <span class="at">inplace =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv2d</span>(ndf <span class="sc">*</span> <span class="dv">4</span>, ndf <span class="sc">*</span> <span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">1</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>), <span class="fu">nn_leaky_relu</span>(<span class="fl">0.2</span>, <span class="at">inplace =</span> <span class="cn">TRUE</span>),</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">nn_conv2d</span>(ndf <span class="sc">*</span> <span class="dv">8</span>, <span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>)</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li>（a） 写出卷积与转置卷积的输出尺寸公式，填写生成器和判别器每一层的输出形状（<span class="math inline">\(N\)</span> 为 batch 维）。</li>
+<li>（b） 计算 <code>ngf = ndf = 64</code> 时生成器和判别器的参数量；再计算 <code>ngf = ndf = 32</code> 时的参数量。解释为什么宽度减半后参数量大约变成 <span class="math inline">\(1/4\)</span>，而不是 <span class="math inline">\(1/2\)</span>。</li>
+<li>（c） 回答四个“为什么”：
+<ol type="1">
+<li>生成器为什么用 BatchNorm，而判别器完全不用 Norm？</li>
+<li>卷积/转置卷积在 BatchNorm 前为什么设 <code>bias = FALSE</code>？</li>
+<li>生成器最后一层为什么用 Tanh，数据预处理为什么用 <code>Normalize(0.5, 0.5)</code>？</li>
+<li>判别器为什么用 LeakyReLU，且最后一层没有 Sigmoid？</li>
+</ol></li>
+<li>（d） 训练结束后直接 <code>netG(torch_randn(...))</code> 采样，和先 <code>netG$eval()</code> 再采样，结果一样吗？用本章的生成器做实验，报告最大绝对差，并解释 BatchNorm 的 train/eval 差异。</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 6 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 卷积输出：</p>
+<p><span class="math display">\[
+H_{\text{out}}
+=\left\lfloor\frac{H_{\text{in}}+2p-k}{s}\right\rfloor+1.
+\]</span></p>
+<p>转置卷积输出（<code>output_padding = 0</code>）：</p>
+<p><span class="math display">\[
+H_{\text{out}}=(H_{\text{in}}-1)s-2p+k.
+\]</span></p>
+<p>生成器（输入 <code>[N, 100, 1, 1]</code>）：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">层</th>
+<th style="text-align: left;">操作</th>
+<th style="text-align: left;">输出形状</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">ConvT <span class="math inline">\(k=4,s=1,p=0\)</span></td>
+<td style="text-align: left;"><code>[N, 512, 4, 4]</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">ConvT <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 256, 8, 8]</code></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">ConvT <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 128, 16, 16]</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">ConvT <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 64, 32, 32]</code></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">ConvT <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 3, 64, 64]</code></td>
+</tr>
+</tbody>
+</table>
+<p>判别器（输入 <code>[N, 3, 64, 64]</code>）：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">层</th>
+<th style="text-align: left;">操作</th>
+<th style="text-align: left;">输出形状</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">Conv <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 64, 32, 32]</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">2</td>
+<td style="text-align: left;">Conv <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 128, 16, 16]</code></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">3</td>
+<td style="text-align: left;">Conv <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 256, 8, 8]</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">4</td>
+<td style="text-align: left;">Conv <span class="math inline">\(k=4,s=2,p=1\)</span></td>
+<td style="text-align: left;"><code>[N, 512, 4, 4]</code></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">5</td>
+<td style="text-align: left;">Conv <span class="math inline">\(k=4,s=1,p=0\)</span></td>
+<td style="text-align: left;"><code>[N, 1, 1, 1]</code></td>
+</tr>
+</tbody>
+</table>
+<p>最后一层 <code>view(-1)</code> 后得到 <code>[N]</code> 的分数向量。注意判别器没有 BatchNorm，所以每个卷积层只有权重、没有偏置（<code>bias = FALSE</code>）。</p>
+<p>（b） 卷积/转置卷积的参数量为</p>
+<p><span class="math display">\[
+C_{\text{in}}\times C_{\text{out}}\times k^2
++\underbrace{C_{\text{out}}}_{\text{偏置（若启用）}}.
+\]</span></p>
+<p>生成器 <code>ngf=64</code>：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">层</th>
+<th style="text-align: left;">计算</th>
+<th style="text-align: right;">参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">ConvT 1</td>
+<td style="text-align: left;"><span class="math inline">\(100\times512\times16\)</span></td>
+<td style="text-align: right;">819,200</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">BN 1</td>
+<td style="text-align: left;"><span class="math inline">\(2\times512\)</span></td>
+<td style="text-align: right;">1,024</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">ConvT 2</td>
+<td style="text-align: left;"><span class="math inline">\(512\times256\times16\)</span></td>
+<td style="text-align: right;">2,097,152</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">BN 2</td>
+<td style="text-align: left;"><span class="math inline">\(2\times256\)</span></td>
+<td style="text-align: right;">512</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">ConvT 3</td>
+<td style="text-align: left;"><span class="math inline">\(256\times128\times16\)</span></td>
+<td style="text-align: right;">524,288</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">BN 3</td>
+<td style="text-align: left;"><span class="math inline">\(2\times128\)</span></td>
+<td style="text-align: right;">256</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">ConvT 4</td>
+<td style="text-align: left;"><span class="math inline">\(128\times64\times16\)</span></td>
+<td style="text-align: right;">131,072</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">BN 4</td>
+<td style="text-align: left;"><span class="math inline">\(2\times64\)</span></td>
+<td style="text-align: right;">128</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">ConvT 5</td>
+<td style="text-align: left;"><span class="math inline">\(64\times3\times16\)</span></td>
+<td style="text-align: right;">3,072</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">合计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">3,576,704</td>
+</tr>
+</tbody>
+</table>
+<p>判别器 <code>ndf=64</code>：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">层</th>
+<th style="text-align: left;">计算</th>
+<th style="text-align: right;">参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">Conv 1</td>
+<td style="text-align: left;"><span class="math inline">\(3\times64\times16\)</span></td>
+<td style="text-align: right;">3,072</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Conv 2</td>
+<td style="text-align: left;"><span class="math inline">\(64\times128\times16\)</span></td>
+<td style="text-align: right;">131,072</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Conv 3</td>
+<td style="text-align: left;"><span class="math inline">\(128\times256\times16\)</span></td>
+<td style="text-align: right;">524,288</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Conv 4</td>
+<td style="text-align: left;"><span class="math inline">\(256\times512\times16\)</span></td>
+<td style="text-align: right;">2,097,152</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Conv 5</td>
+<td style="text-align: left;"><span class="math inline">\(512\times1\times16\)</span></td>
+<td style="text-align: right;">8,192</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">合计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">2,763,776</td>
+</tr>
+</tbody>
+</table>
+<p><code>ngf=ndf=32</code> 时：</p>
+<ul>
+<li>生成器：1,100,224；</li>
+<li>判别器：693,760。</li>
+</ul>
+<p>宽度减半（<span class="math inline">\(64\to32\)</span>）时，每个卷积层的 <span class="math inline">\(C_{\text{in}}C_{\text{out}}\)</span> 变成原来的 <span class="math inline">\(1/4\)</span>（两个因子都减半），所以参数量约变成 <span class="math inline">\(1/4\)</span>。BatchNorm 只有 <span class="math inline">\(2C\)</span> 个参数，是线性的，占比很小；因此总参数量也接近 <span class="math inline">\(1/4\)</span>，但不是严格 <span class="math inline">\(1/4\)</span>（BN 项按 <span class="math inline">\(1/2\)</span> 缩小）。</p>
+<p>可以用代码核对：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>count <span class="ot">&lt;-</span> <span class="cf">function</span>(m) <span class="fu">sum</span>(<span class="fu">sapply</span>(m<span class="sc">$</span>parameters, <span class="cf">function</span>(p) p<span class="sc">$</span><span class="fu">numel</span>()))</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="fu">count</span>(<span class="fu">Generator</span>(<span class="dv">100</span>, <span class="dv">64</span>))  <span class="co"># 3576704</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="fu">count</span>(<span class="fu">Discriminator</span>(<span class="dv">64</span>))   <span class="co"># 2763776</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="fu">count</span>(<span class="fu">Generator</span>(<span class="dv">100</span>, <span class="dv">32</span>))  <span class="co"># 1100224</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="fu">count</span>(<span class="fu">Discriminator</span>(<span class="dv">32</span>))   <span class="co"># 693760</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（c）</p>
+<ol type="1">
+<li>生成器用 BN，判别器不用。 生成器的 BN 把每层激活归一化，缓解内部协变量偏移，让深层的转置卷积更容易训练。判别器/Critic 不用 BN，主要因为 WGAN-GP 的梯度惩罚是逐样本的：BN 在一个 batch 内混合样本，单张图片的输出会依赖同 batch 的其他图片，逐样本梯度不再是真正的逐样本梯度；此外 BN 在 train/eval 下统计量不同，会让 Critic 的评分和 GP 不稳定。DCGAN 原文的判别器其实用了 BN，但 WGAN-GP 论文明确建议 Critic 不要用 BN，改用 LayerNorm/GroupNorm 或不归一化。本章脚本为了 MPS 兼容和 GP 稳定性，直接移除了所有 Norm。</li>
+<li>BN 前 <code>bias = FALSE</code>。 BN 会先减均值再除以标准差，卷积的常数偏置会被减掉；保留偏置只是多一个冗余参数（而且它的梯度会被 BN 的均值项抵消一部分）。所以标准做法是卷积不带偏置，把“平移”交给 BN 的 <span class="math inline">\(\beta\)</span>。</li>
+<li>Tanh + <code>Normalize(0.5, 0.5)</code>。 <code>transform_to_tensor()</code> 把像素变到 <span class="math inline">\([0,1]\)</span>，<code>Normalize(mean=0.5, std=0.5)</code> 把它线性映射到 <span class="math inline">\([-1,1]\)</span>。生成器最后一层 Tanh 的值域正好是 <span class="math inline">\((-1,1)\)</span>，与数据尺度匹配；如果生成器输出无界值，而数据在 <span class="math inline">\([-1,1]\)</span>，判别器很容易靠“数值范围”而不是内容区分真假。Tanh 在两端也会饱和，但这里它是输出层，且配合 MSE/BCE 的梯度通常可以工作；更现代的架构常用无界输出 + 相应的损失归一化。</li>
+<li>判别器用 LeakyReLU，最后一层无 Sigmoid。 LeakyReLU 在负半轴保留一个小斜率（0.2），避免 ReLU 的“死亡神经元”让判别器过早失去梯度。最后一层无 Sigmoid，因为 WGAN 的 Critic 输出的是无界的“分数”，不是概率；Sigmoid 会把分数压到 <span class="math inline">\((0,1)\)</span>，既限制表达能力，又在两端饱和。LSGAN 的判别器同样去掉了 Sigmoid（见练习 2）。</li>
+</ol>
+<p>（d） 不一样。BatchNorm 在 <code>train()</code> 模式下用当前 batch 的均值和方差归一化；在 <code>eval()</code> 模式下用训练过程中累积的 running mean/var。生成器里有 4 个 BN，采样时如果仍处于 train 模式，每张图的输出会依赖同 batch 的其他噪声样本，而且每次前向的 batch 组成不同，结果就会抖动。</p>
+<p>用本章的生成器实测（固定同一组噪声）：</p>
+<pre><code>train vs eval max abs diff: 1.009486
+eval twice diff: 0</code></pre>
+<p><code>train</code> 与 <code>eval</code> 的最大绝对差约为 <span class="math inline">\(1.01\)</span>（像素值在 <span class="math inline">\([-1,1]\)</span> 内），这是很大的差异；<code>eval</code> 连续两次前向完全一致（差为 <span class="math inline">\(0\)</span>），因为 running stats 固定、BN 是确定性的。</p>
+<p>正确做法：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>netG<span class="sc">$</span><span class="fu">eval</span>()</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="fu">with_no_grad</span>({</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  fake <span class="ot">&lt;-</span> <span class="fu">netG</span>(fixed_noise)</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>eval()</code> 只切换 BN/Dropout 的行为，不关闭梯度；<code>with_no_grad()</code> 才是关闭梯度记录。两者都要。生成新样本时用 <code>eval()</code> 是标准做法；只有在训练、需要 batch 统计量时才用 <code>train()</code>。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="三开放思考" class="level2">
+<h2 class="anchored" data-anchor-id="三开放思考">三、开放思考</h2>
+<section id="练习-7模式坍塌评价指标与模型取舍" class="level3">
+<h3 class="anchored" data-anchor-id="练习-7模式坍塌评价指标与模型取舍">练习 7：模式坍塌、评价指标与模型取舍</h3>
+<ul>
+<li>（a） 什么是模式坍塌（mode collapse）？为什么极小极大目标可能鼓励它？给出一个可观察的诊断信号和一个常用的缓解手段。</li>
+<li>（b） FID 和 Inception Score（IS）各衡量什么？它们各自的局限是什么？为什么不能在不同预处理/不同特征提取器下直接比较 FID？</li>
+<li>（c） 从样本质量、模式覆盖、训练稳定性、采样速度、似然估计五个维度，比较 GAN、VAE 和扩散模型。它们各自最适合什么场景？</li>
+<li>（d） 条件 GAN 与 CycleGAN 分别如何改变“生成”的定义？各举一个失败模式，并说明对应的诊断方法。</li>
+<li>（e） 什么情况下应该选 WGAN-GP，而不是标准 GAN 或谱归一化 GAN？选择时需要考虑哪些工程成本？</li>
+<li>（f） 用 AnimeFace 训练头像生成器时，数据许可、版权、生成人脸的肖像权和滥用风险分别要注意什么？列出至少三条上线前的检查。</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 7 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 模式坍塌指生成器把多个不同的 <span class="math inline">\(z\)</span> 映射到几乎相同的输出，只覆盖真实分布的少数几个模式（例如只生成某一种发型/脸型），而丢掉其他模式。判别器一旦学会识破这个模式，生成器可能不是“学会其他模式”，而是“换一个模式继续骗”，形成循环。</p>
+<p>极小极大目标可能鼓励坍塌，因为生成器的损失只关心当前判别器下的期望得分，不直接惩罚“覆盖了多少真实模式”。如果某个模式最容易骗过当前的 <span class="math inline">\(D\)</span>，把质量集中到那里就能快速降低损失；覆盖其他模式反而可能暂时降低平均得分。尤其当 <span class="math inline">\(D\)</span> 的容量有限、只看局部纹理时，坍塌更严重。</p>
+<p>诊断信号：</p>
+<ul>
+<li>固定 <span class="math inline">\(z\)</span> 网格，观察样本是否大量重复（视觉/聚类）；</li>
+<li>在玩具数据上统计“生成样本覆盖了多少个已知模式”；</li>
+<li>计算生成样本两两距离的分布，坍塌时距离集中在很小的值；</li>
+<li>监控 FID 的 recall 分量（或 precision/recall），坍塌通常表现为 recall 低而 precision 不低。</li>
+</ul>
+<p>缓解手段：minibatch discrimination（让 <span class="math inline">\(D\)</span> 看整个 batch 的多样性）、unrolled GAN（生成器考虑 <span class="math inline">\(D\)</span> 未来几步的更新）、WGAN-GP、谱归一化、增大 batch、在 <span class="math inline">\(D\)</span> 的输入中加噪声、或改用能覆盖模式的似然模型。没有一种方法能保证消除坍塌；通常要组合使用并做多样性评估。</p>
+<p>（b） IS 用 Inception 分类器对生成图像做条件分布 <span class="math inline">\(p(y|x)\)</span>，计算</p>
+<p><span class="math display">\[
+\exp\Bigl(\mathbb E_x \mathrm{KL}(p(y|x)\|p(y))\Bigr).
+\]</span></p>
+<p>它奖励“单张图分类置信度高”（质量）且“各类别边际分布均匀”（多样性），但它不比较真实数据分布，只衡量生成样本自身的标签分布，且对分类器偏差敏感。FID 把真实图和生成图都送进 Inception 特征提取器，拟合两个多元高斯，计算</p>
+<p><span class="math display">\[
+\|\mu_r-\mu_g\|_2^2
++\mathrm{Tr}\bigl(\Sigma_r+\Sigma_g-2(\Sigma_r\Sigma_g)^{1/2}\bigr).
+\]</span></p>
+<p>它同时看均值（质量/偏差）和协方差（多样性），越低越好。FID 的局限：</p>
+<ul>
+<li>依赖特征提取器（Inception 的版本、权重、输入分辨率）；</li>
+<li>假设特征服从高斯，对多模态/重尾分布不一定成立；</li>
+<li>样本量小时估计有偏，<span class="math inline">\(N\)</span> 越小 FID 往往越“好看”或越不稳定；</li>
+<li>对预处理（归一化、裁剪、缩放）极其敏感。</li>
+</ul>
+<p>所以只有在同一特征提取器、同一分辨率、同一预处理、同一样本量下比较 FID 才有意义；跨论文比较 FID 数字通常不可靠。更稳妥的做法是同时报告 precision/recall、KID（无高斯假设）和下游任务指标。</p>
+<p>（c）</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">维度</th>
+<th style="text-align: left;">GAN</th>
+<th style="text-align: left;">VAE</th>
+<th style="text-align: left;">扩散模型</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">样本质量</td>
+<td style="text-align: left;">高，边缘锐利</td>
+<td style="text-align: left;">偏模糊</td>
+<td style="text-align: left;">很高，细节丰富</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">模式覆盖</td>
+<td style="text-align: left;">容易坍塌</td>
+<td style="text-align: left;">覆盖较好（受 KL 影响）</td>
+<td style="text-align: left;">覆盖好</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">训练稳定性</td>
+<td style="text-align: left;">差，博弈/震荡</td>
+<td style="text-align: left;">好，单目标优化</td>
+<td style="text-align: left;">较好，但有噪声调度/采样调参</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">采样速度</td>
+<td style="text-align: left;">一次前向，最快</td>
+<td style="text-align: left;">一次解码，快</td>
+<td style="text-align: left;">多步迭代，慢（几十到上千步）</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">似然估计</td>
+<td style="text-align: left;">无（或需额外工作）</td>
+<td style="text-align: left;">有 ELBO，可近似</td>
+<td style="text-align: left;">有连续时间似然/ELBO，但计算复杂</td>
+</tr>
+</tbody>
+</table>
+<p>取舍：</p>
+<ul>
+<li>GAN：需要实时/低延迟生成、样本质量优先、能接受训练不稳定和多样性风险（如头像、风格迁移、超分）。</li>
+<li>VAE：需要概率编码/潜空间、异常检测、压缩、可解释的似然下界，或作为扩散模型的分量。</li>
+<li>扩散：离线生成、质量/多样性优先、算力充足（图像/视频/音频生成的主流）。</li>
+<li>实际系统常常混合：VAE 编码器 + 扩散先验、GAN 判别器做感知损失、或蒸馏把扩散采样步数压到几步。</li>
+</ul>
+<p>（d） 条件 GAN：生成器和判别器都额外接收条件 <span class="math inline">\(y\)</span>（类别、文本、姿态等）。生成器学 <span class="math inline">\(p(x|y)\)</span>，判别器判断“<span class="math inline">\((x,y)\)</span> 是否匹配”，而不只是“<span class="math inline">\(x\)</span> 是否真实”。典型失败是条件坍塌：判别器忽略 <span class="math inline">\(y\)</span>，只根据 <span class="math inline">\(x\)</span> 的真假打分，生成器也就不理会条件，所有类别生成同一种图。诊断：固定 <span class="math inline">\(z\)</span>、改变 <span class="math inline">\(y\)</span>，看输出是否变化；或训练一个独立的分类器检查生成图的标签是否符合 <span class="math inline">\(y\)</span>。缓解：projection discriminator、辅助分类器损失、条件注入到 <span class="math inline">\(D\)</span> 的多个层、classifier-free guidance。</p>
+<p>CycleGAN：用于无配对的图像到图像翻译。两个生成器 <span class="math inline">\(G:A\to B\)</span>、<span class="math inline">\(F:B\to A\)</span>，两个判别器 <span class="math inline">\(D_A,D_B\)</span>，损失包含对抗项和循环一致性</p>
+<p><span class="math display">\[
+\lambda\,\mathbb E_{a}\|F(G(a))-a\|_1
++\lambda\,\mathbb E_{b}\|G(F(b))-b\|_1.
+\]</span></p>
+<p>它不要求 <span class="math inline">\(a\)</span> 与 <span class="math inline">\(b\)</span> 成对，只要求“转过去再转回来”能还原。典型失败：循环一致性只约束“可逆”，不约束“内容不变”，<span class="math inline">\(G\)</span> 可能把内容藏到看不见的高频/颜色通道里，或把多张输入映射到同一张输出（模式坍塌）。诊断：检查 <span class="math inline">\(G(a)\)</span> 是否保留了输入的语义/几何（分割、关键点、光流），比较不同输入的输出多样性；缓解：identity loss、感知损失、增加对抗权重、使用注意力/可逆结构。</p>
+<p>（e） 选 WGAN-GP 的典型场景：</p>
+<ul>
+<li>标准 GAN 的损失曲线没有意义、训练震荡/崩溃，需要有意义的 Wasserstein 估计做模型选择；</li>
+<li>生成分布与真实分布支撑集重叠很少（例如低维流形上的图像），JS 饱和导致梯度消失；</li>
+<li>需要较稳定的梯度信号，且能接受额外的计算成本。</li>
+</ul>
+<p>工程成本：</p>
+<ul>
+<li>GP 需要二次反向传播（对梯度再求导），训练显存/时间显著增加；</li>
+<li>Critic 中不能随意用 BatchNorm（逐样本梯度会被 batch 统计量污染），要改用 LayerNorm/GroupNorm/无归一化；</li>
+<li>需要在真实/假样本之间做插值，输入必须是连续可微的（离散数据如文本不能直接插值）；</li>
+<li><span class="math inline">\(\lambda\)</span>、<code>n_critic</code>、学习率、优化器（常要求 Adam <span class="math inline">\(\beta_1=0\)</span> 或 RMSprop）都要重新调；</li>
+<li>训练更慢，且不保证样本质量一定更好。</li>
+</ul>
+<p>如果标准 GAN + 谱归一化已经稳定，或算力/延迟受限，未必要上 WGAN-GP。谱归一化只约束 Critic 的 Lipschitz 常数、成本低，是很多图像任务的默认选择；WGAN-GP 更适合“训练诊断困难、需要稳定距离信号”的场合。</p>
+<p>（f） 至少检查：</p>
+<ol type="1">
+<li>数据许可/版权：AnimeFace 数据集里的图片来自网络动漫头像，原始版权可能不属于数据集发布者。训练前确认数据集许可证、是否允许派生模型/商用；生成模型不应被用来复刻特定受版权保护的角色。</li>
+<li>肖像权/人格权：动漫角色通常不涉及真人肖像，但如果数据里混入真人照片、或模型能生成与真实人物高度相似的脸，就可能侵犯肖像权。上线前做相似度检索，禁止生成特定真人。</li>
+<li>滥用/深度伪造：头像生成器可能被用于制作虚假身份、诈骗、骚扰。需要水印/元数据标记、输出内容审核、使用条款禁止冒充他人，并保留滥用追踪机制。</li>
+<li>偏差与代表性：数据集可能偏向某种画风、性别、肤色；评估生成样本的多样性，避免模型放大偏见。</li>
+<li>隐私：如果训练数据包含个人信息，检查是否可能被模型记忆/复现；对生成样本做近邻检索，排除复制训练样本的情况。</li>
+</ol>
+<p>技术指标之外，上线前应有法务/伦理审查和明确的删除/申诉渠道。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="四纠错与陷阱" class="level2">
+<h2 class="anchored" data-anchor-id="四纠错与陷阱">四、纠错与陷阱</h2>
+<section id="练习-8容易踩的坑" class="level3">
+<h3 class="anchored" data-anchor-id="练习-8容易踩的坑">练习 8：容易踩的坑</h3>
+<p>下面每一条都来自本章正文或 <code>code/13_*</code> 脚本。请先判断“是否会报错/是否改变结果”，再给出修正。</p>
+<ul>
+<li>（a） 正文 LSGAN 的公式带 <span class="math inline">\(1/2\)</span>，脚本 <code>loss_d</code>、<code>loss_g</code> 不带。这是 bug 吗？在 RMSprop 和 SGD 下分别会怎样？</li>
+<li>（b） 训练判别器时忘了对假样本写 <code>$detach()</code>，会报什么错？为什么？</li>
+<li>（c） 如果在 WGAN-GP 的 Critic 中加入 BatchNorm，会有什么问题？为什么本章脚本把 Norm 层全部移除？</li>
+<li>（d） <code>code/13_WGAN_GP.R</code> 的 <code>calc_gradient_penalty()</code> 用全局 <code>batch_size</code> 构造 <code>alpha_dims</code> 和 <code>view()</code>。在什么情况下会崩？怎么改？</li>
+<li>（e） 训练结束后直接 <code>netG(fixed_noise)</code> 画图，和先 <code>netG$eval()</code> 再画，结果一样吗？为什么？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 8 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a） 不是会改变优化方向的 bug，但是公式与代码不一致。</p>
+<ul>
+<li>正文的 <span class="math inline">\(L_D\)</span>、<span class="math inline">\(L_G\)</span> 都带 <span class="math inline">\(1/2\)</span>；脚本把两个 MSE 直接相加，没有 <span class="math inline">\(1/2\)</span>。数学上最小化 <span class="math inline">\(L\)</span> 与最小化 <span class="math inline">\(L/2\)</span> 的最优点相同，所以“解”不变。</li>
+<li>SGD：梯度整体变为 <span class="math inline">\(1/2\)</span>，等价于学习率减半。训练轨迹和收敛速度会变，需要重新调 <code>lr</code>。</li>
+<li>RMSprop/Adam：自适应分母会抵消全局尺度（忽略 <span class="math inline">\(\epsilon\)</span>），更新几乎不变。脚本用 RMSprop，所以数值上影响很小。</li>
+<li>但 D 和 G 的损失同时少乘 <span class="math inline">\(1/2\)</span>，两者的相对平衡不变；如果只改其中一个，才会改变 D/G 的相对步长。</li>
+</ul>
+<p>建议：要么在公式中注明“这里省略了常数因子 <span class="math inline">\(1/2\)</span>”，要么在代码中乘上，保持可复现性。对教学材料来说，公式与代码一致比“数学上等价”更重要，因为读者会照抄。</p>
+<p>（b） 报错：</p>
+<pre><code>RuntimeError: Trying to backward through the graph a second time
+(or directly access saved tensors after they have already been freed).</code></pre>
+<p>原因：D 的损失包含 <code>netD(fake_data)</code>，而 <code>fake_data = netG(noise)</code> 仍挂在 G 的计算图上。D 的 <code>backward()</code> 会沿着 <code>D(fake_data) → fake_data → G</code> 一直反传，并在途中释放 G 图里的中间张量。随后 G 的 <code>loss_g$backward()</code> 需要再次穿过同一张图，就发现图已经被释放。</p>
+<p><code>fake_data$detach()</code> 返回一个与原图共享数据、但 <code>requires_grad = FALSE</code> 的张量，切断了 D 到 G 的梯度路径。这样：</p>
+<ul>
+<li>D 的反向传播只更新 D；</li>
+<li>G 的图保持完整，供 G 的 <code>backward()</code> 使用；</li>
+<li>生成器的参数不会在 D 更新时被误改。</li>
+</ul>
+<p>（c） BatchNorm 在 Critic 中会破坏 WGAN-GP 的逐样本性质：</p>
+<ul>
+<li>BN 用整个 batch的均值/方差归一化，单张图片的输出依赖于同 batch 的其他图片。GP 惩罚的是“每个插值样本 <span class="math inline">\(\hat x_i\)</span> 的梯度范数”，但 BN 让 <span class="math inline">\(\hat x_i\)</span> 的梯度混入了 batch 内其他样本的信息，不再是真正的逐样本梯度。</li>
+<li>BN 在 <code>train()</code> 下用 batch 统计量，在 <code>eval()</code> 下用 running 统计量，Critic 的评分函数在训练/推理间发生变化，Wasserstein 估计和 GP 都会漂移。</li>
+<li>GP 需要对输入求梯度，BN 的反向传播还涉及 batch 维的耦合，容易引入数值不稳定。</li>
+</ul>
+<p>所以 WGAN-GP 论文建议 Critic 不使用 BN，改用 LayerNorm、GroupNorm 或不归一化。本章脚本为了 MPS 兼容和稳定性，把 Critic 的 Norm 层全部移除；生成器仍然保留 BN（生成器不参与 GP 的逐样本梯度惩罚）。</p>
+<p>（d） 会在这两种情况下崩：</p>
+<ol type="1">
+<li>最后一个 batch 不满（<code>drop_last = FALSE</code>）：<code>real</code> 的 batch 维是 <span class="math inline">\(B'&lt;512\)</span>，但 <code>alpha_dims = c(512, 1)</code>，广播失败；<code>grad$view(c(512, -1))</code> 也会因为元素数不是 512 的倍数而报错。</li>
+<li>用 5,000 个样本做最终评估/画图时仍调用同一个函数：<code>B'=5000</code>，<code>view(c(512,-1))</code> 直接报 <code>shape '[512, -1]' is invalid for input of size 5000</code>（或类似的 shape 错误）。</li>
+</ol>
+<p>修正：所有形状从输入读取，</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>B <span class="ot">&lt;-</span> real<span class="sc">$</span><span class="fu">size</span>(<span class="dv">1</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>alpha_dims <span class="ot">&lt;-</span> <span class="fu">c</span>(B, <span class="fu">rep</span>(<span class="dv">1</span>, real<span class="sc">$</span><span class="fu">dim</span>() <span class="sc">-</span> <span class="dv">1</span>))</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>x_hat <span class="ot">&lt;-</span> (alpha <span class="sc">*</span> real <span class="sc">+</span> (<span class="dv">1</span> <span class="sc">-</span> alpha) <span class="sc">*</span> fake)<span class="sc">$</span><span class="fu">requires_grad_</span>(<span class="cn">TRUE</span>)</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a><span class="co"># ...</span></span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>grad <span class="ot">&lt;-</span> grad<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, <span class="sc">-</span><span class="dv">1</span>))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>本章的 DCGAN 脚本已经这样写（<code>real_samples$size(1)</code>），1D 脚本则是全局 <code>batch_size</code>；如果在 1D 脚本里改 batch 大小或复用函数做评估，就会踩坑。</p>
+<p>（e） 不一样。生成器有 4 个 BatchNorm 层：</p>
+<ul>
+<li><code>netG$train()</code>（默认状态）：BN 用当前 batch 的均值和方差。采样 8 张图时，每张图的输出依赖这 8 张图组成的 batch；换一批噪声、换 batch 大小，结果都会变。</li>
+<li><code>netG$eval()</code>：BN 用训练时累积的 running mean/var，逐样本确定；同一输入连续两次前向结果完全一致。</li>
+</ul>
+<p>实测最大绝对差约 1.009（像素范围 <span class="math inline">\([-1,1]\)</span>），<code>eval</code> 两次差为 0。所以画图/评估前必须：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>netG<span class="sc">$</span><span class="fu">eval</span>()</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="fu">with_no_grad</span>({</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  fake <span class="ot">&lt;-</span> <span class="fu">netG</span>(fixed_noise)</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>如果忘记 <code>eval()</code>，预览图会抖动、不可复现，而且和“模型最终学到的分布”有系统偏差（batch 统计量 vs running 统计量）。训练循环内部保持 <code>train()</code> 是对的；采样/评估切到 <code>eval()</code>。</p>
+</div>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="进一步练习可选" class="level2">
+<h2 class="anchored" data-anchor-id="进一步练习可选">进一步练习（可选）</h2>
+<p>如果希望把本章内容串起来，可以做一个“GAN 体检”小项目：</p>
+<ol type="1">
+<li>在 1D 玩具数据上同时训练 LSGAN、WGAN-Clipping、WGAN-GP，固定种子和步数，记录生成样本的均值/标准差、Wasserstein 估计和梯度范数；比较三者在“支撑集分离”场景下的收敛速度。</li>
+<li>把 LSGAN 的噪声从均匀改为正态，重跑 10,000 步；再用两种噪声交叉采样，画一张 <span class="math inline">\(2\times2\)</span> 的均值/标准差表，验证“噪声分布是模型的一部分”。</li>
+<li>在 AnimeFace 上只训练 5 轮，分别用 <code>per_row = 8</code> 和 <code>per_row = 4</code> 画网格，检查 <code>vision_make_grid</code> 的形状；再对比 <code>netG$train()</code> 与 <code>netG$eval()</code> 的采样结果。</li>
+<li>给 Critic 加 BatchNorm，观察 WGAN-GP 的梯度范数分布和样本质量是否变差；再把 BN 换成 LayerNorm，比较训练稳定性。</li>
+<li>用同一组生成样本计算 FID 的 precision/recall 分量（可用现成的 R/Python 实现），观察“只看 FID 总分”会漏掉哪种失败（质量差还是多样性差）。</li>
+</ol>
+<p>报告时至少给出三次随机种子的均值和标准差，不要只报最好的一次；GAN 的指标波动通常比监督学习大得多。</p>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "已复制");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "已复制");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="./12-vae-exercises.html" class="pagination-link" aria-label="12 变分自编码器">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">12 变分自编码器</span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="./14-diffusion-exercises.html" class="pagination-link" aria-label="14 扩散模型">
+        <span class="nav-page-text">14 扩散模型</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

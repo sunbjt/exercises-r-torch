@@ -1,0 +1,735 @@
+# 05 优化与训练动力学 {.unnumbered}
+
+本章的练习围绕三个问题展开：梯度是怎样被高效算出来的、优化器如何在损失曲面上行走、训练失控时如何诊断。题目与正文的对应关系如下：
+
+- 练习 1～3 对应「再看反向传播」「梯度下降演进和实现」，以推导和手算为主；
+- 练习 4～6 对应「梯度下降演进和实现」「State Dict」「学习率调度器」，需要在 R 中运行代码；
+- 练习 7 是开放题，讨论优化器选择、学习率调度与混合精度的工程权衡；
+- 练习 8 是纠错题，检验你能否发现梯度裁剪、断点续训、AMP 与调度器中的常见误用。
+
+建议总用时 2.5～3 小时。编程题请先读完题干再动手，所有比较都要在相同起点、相同步数下进行。
+
+## 一、概念与推导
+
+### 练习 1：雅可比、VJP 与反向传播的成本
+
+请回答：
+
+- （a） 对单层线性变换 $y = Wx$（$W \in \mathbb{R}^{m \times n}$），写出雅可比矩阵 $\partial y / \partial x$。若 $m = n = 1000$、数据类型为 float32，这个雅可比矩阵占多少内存？若一个网络有 100 个这样的层，朴素地按照“雅可比矩阵连乘”求导，单次反向传播大约需要多少次乘法？为什么这种做法不可行？
+- （b） 解释 VJP（向量-雅可比积）：为什么反向模式不需要物化整个雅可比矩阵？每层计算 $v^\top J$ 的代价与一次前向传播相比如何？由此说明“反向传播的成本约为前向的 2～3 倍”。
+- （c） 对 $x = (1, 2, 3)$、$y = x^2$，直接调用 `y$backward()` 会发生什么？如果传入 `gradient = torch_tensor(c(1, 0, 0))`，`x$grad` 是多少？请用 VJP 解释这个结果。
+- （d） 当 `loss` 是标量时，`backward()` 默认的初始梯度是 1。如果把 batch 的求和损失（sum）改成平均损失（mean），梯度会怎样变化？学习率应如何相应调整？
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a） 线性层的雅可比矩阵就是权重矩阵本身：
+
+$$
+J = \frac{\partial y}{\partial x} = W \in \mathbb{R}^{m \times n}.
+$$
+
+$1000 \times 1000$ 的 float32 矩阵有 $10^6$ 个元素，每个 4 字节，共 4 MB。100 层就要存储约 400 MB 的雅可比矩阵，这还只是“存下来”的开销。
+
+更严重的是计算量：两个 $1000 \times 1000$ 矩阵相乘约需 $2 \times 1000^3 = 2 \times 10^9$ 次浮点运算，99 次连乘约 $2 \times 10^{11}$ 次。单次反向传播就要千亿级运算，而且中间结果无法全部装进显存。这正是正文说“内存和算力会瞬间爆炸”的含义。
+
+（b） 反向传播的起点是一个标量 Loss，记初始梯度向量为 $v$（标量时 $v = 1$）。在每一层，我们只需要计算
+
+$$
+\text{上游梯度} = v^\top J,
+$$
+
+而不需要把 $J$ 完整写出来。对线性层，$v^\top W$ 就是一次矩阵-向量乘法，代价是 $O(mn)$，与一次前向的矩阵-向量乘法同阶；对元素级算子（ReLU、加法）代价更低。把每层的 VJP 串起来，总代价约为一次前向的 2 倍（一次算对输入的梯度，一次算对参数的梯度），再加上少量非线性开销，所以经验上常说反向传播是前向的 2～3 倍，而不是每层 $O(n^3)$。
+
+（c） 直接调用会报错：
+
+```r
+x <- torch_tensor(c(1, 2, 3), requires_grad = TRUE)
+y <- x^2
+y$backward()
+# Error: grad can be implicitly created only for scalar outputs
+```
+
+因为 $y$ 是向量，Autograd 需要一个外部梯度 $v$ 才能启动 VJP。传入 $v = (1, 0, 0)$ 后：
+
+```r
+y$backward(gradient = torch_tensor(c(1, 0, 0)))
+x$grad
+# tensor [2, 0, 0]
+```
+
+数学上 $J = \operatorname{diag}(2x) = \operatorname{diag}(2, 4, 6)$，所以 $v^\top J = (1, 0, 0)\operatorname{diag}(2, 4, 6) = (2, 0, 0)$。只有第一个输出被“追问”，因此只有 $x_1$ 收到梯度。
+
+（d） 标量 Loss 的默认种子是 $v = 1$，对应 $\partial L / \partial L = 1$，这是链式法则的起点，不会改变任何结果。
+
+若把 `loss = sum_i ℓ_i` 改成 `loss = (1/B) sum_i ℓ_i`，梯度整体缩小为原来的 $1/B$。因此：
+
+- 从 sum 改成 mean 而学习率不变，等效步长会缩小 $B$ 倍，训练明显变慢；
+- 如果坚持用 sum，应把学习率除以 $B$（或使用梯度累积时按累积步数缩放），否则等效学习率随 batch size 线性增大。
+
+这也是“学习率随 batch size 线性缩放”经验规则的来源之一。
+
+:::
+
+### 练习 2：SGD 的收敛区间与病态曲率
+
+请回答：
+
+- （a） 对 $f(x) = x^2$，写出梯度下降的迭代式，证明 $x_{t+1} = (1 - 2\eta)x_t$。分别给出单调收敛、震荡收敛、发散的 $\eta$ 区间，并讨论 $\eta = 0.5$ 与 $\eta = 1$ 两个边界。取 $x_0 = -10$，填写 $\eta = 0.1, 0.4, 0.6, 0.9, 1.2$ 时 20 次更新后的 $x_{20}$，以及符号翻转次数（每次更新后的值与上一值比较，含从 $x_0$ 到 $x_1$ 的第一次更新）。
+- （b） 对 $f(x, y) = \frac{1}{2}x^2 + 50y^2$，写出每个坐标的更新式。证明 $y$ 方向稳定要求 $\eta < 0.02$；取 $\eta = 0.019$，从 $(1, 1)$ 出发，计算 200 步后 $x$ 与 $y$ 的近似值，并解释为什么这叫“病态曲率”。
+- （c） 设单样本梯度的方差为 $\sigma^2$，用 $B$ 个样本的平均梯度估计全量梯度，其方差是多少？小批量带来的梯度噪声为什么有正则化效果？batch size 过大或过小分别有什么代价？
+- （d） 动量法如何缓解（b）中的窄谷问题？用“一致方向累积、震荡方向抵消”的直觉解释，并写出 $\gamma = 0.9$、梯度恒定时动量的稳态速度。
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a） $f'(x) = 2x$，所以
+
+$$
+x_{t+1} = x_t - \eta \cdot 2x_t = (1 - 2\eta)x_t.
+$$
+
+这是公比 $q = 1 - 2\eta$ 的等比数列，$x_t = q^t x_0$。收敛性由 $|q|$ 决定：
+
+| 条件 | $q$ 的范围 | $\eta$ 的范围 | 行为 |
+|---|---|---|---|
+| $0 < q < 1$ | 单调收敛 | $0 < \eta < 0.5$ | 始终从同侧靠近 0 |
+| $-1 < q < 0$ | 震荡收敛 | $0.5 < \eta < 1$ | 在 0 两侧跳跃，幅度递减 |
+| $\lvert q \rvert > 1$ | 发散 | $\eta > 1$ | 跳跃幅度递增 |
+
+两个边界：$\eta = 0.5$ 时 $q = 0$，一步到达 0；$\eta = 1$ 时 $q = -1$，在 $\pm 10$ 之间永久震荡，既不收敛也不发散。
+
+取 $x_0 = -10$，20 次更新后实测：
+
+| $\eta$ | $q$ | $x_{20}$ | 符号翻转次数 | 行为 |
+|---|---|---|---|---|
+| 0.1 | 0.8 | $-0.1153$ | 0 | 单调收敛 |
+| 0.4 | 0.2 | $-1.05 \times 10^{-13}$ | 0 | 单调收敛（很快） |
+| 0.6 | $-0.2$ | $-1.05 \times 10^{-13}$ | 20 | 震荡收敛 |
+| 0.9 | $-0.8$ | $-0.1153$ | 20 | 震荡收敛 |
+| 1.2 | $-1.4$ | $-8366.8$ | 20 | 发散 |
+
+理论值与 $x_0 q^{20}$ 完全一致。可以验证，$\eta = 0.5$ 时第一步就到 0。
+
+（b） 梯度为 $(\partial f/\partial x, \partial f/\partial y) = (x, 100y)$，所以
+
+$$
+x_{t+1} = (1 - \eta)x_t, \qquad y_{t+1} = (1 - 100\eta)y_t.
+$$
+
+$y$ 方向稳定要求 $|1 - 100\eta| < 1$，即 $0 < \eta < 0.02$。取 $\eta = 0.019$：
+
+$$
+x \text{ 的因子} = 0.981, \qquad y \text{ 的因子} = -0.9.
+$$
+
+从 $(1, 1)$ 出发，200 步后
+
+$$
+x_{200} = 0.981^{200} \approx 0.0216, \qquad y_{200} = (-0.9)^{200} \approx 7.1 \times 10^{-10}.
+$$
+
+$y$ 早已收敛，$x$ 却还差两个数量级。若要求 $x$ 降到 $10^{-3}$，需要约 $\ln(10^{-3})/\ln(0.981) \approx 361$ 步；而 $y$ 只需约 66 步。原因是为了不让陡峭的 $y$ 方向爆炸，学习率被迫压得很小，平缓的 $x$ 方向因此走得很慢。两个方向的曲率相差 100 倍（条件数 $\kappa = 100$），这就是“病态曲率”或“窄谷”。
+
+（c） 若单样本梯度独立、方差为 $\sigma^2$，则 $B$ 个样本平均后的方差为
+
+$$
+\operatorname{Var}\left(\frac{1}{B}\sum_{i=1}^{B} g_i\right) = \frac{\sigma^2}{B}.
+$$
+
+batch 越小，噪声越大。适度噪声能帮助模型离开鞍点和尖锐的极小值，倾向于找到更平坦、泛化更好的区域，这就是“梯度噪声的正则化效果”。
+
+代价：$B$ 太小无法利用 GPU 的矩阵并行，更新虽多但噪声过大、曲线剧烈震荡；$B$ 太大则单步计算贵、更新次数少，噪声不足，还可能降低泛化。常见做法是先选一个能喂满硬件的 batch size，再按线性缩放规则调整学习率，并配合 warmup。
+
+（d） 动量维护速度 $v_t = \gamma v_{t-1} + \eta \nabla f$。在窄谷中：
+
+- 沿谷底（$x$ 方向）：梯度的符号长期一致，速度不断累积，有效步长从 $\eta$ 增大到约 $\eta/(1-\gamma)$；
+- 横跨山谷（$y$ 方向）：梯度正负交替，正负项互相抵消，速度被抑制，震荡减小。
+
+梯度恒为 $g$ 时，稳态速度为
+
+$$
+v^* = \frac{\eta g}{1 - \gamma}.
+$$
+
+$\gamma = 0.9$ 时 $v^* = 10\eta g$，等效学习率放大约 10 倍。这也解释了为什么开启动量后通常要重新调小学习率。
+
+:::
+
+### 练习 3：Momentum、Adam 与 AdamW
+
+请回答：
+
+- （a） 把动量更新 $v_t = \gamma v_{t-1} + \eta g_t$ 展开成对历史梯度的加权和。若梯度恒为 $g$，稳态速度是多少？等效学习率是多少？
+- （b） 写出 Adam 的一阶矩、二阶矩、偏差修正和参数更新式。为什么需要偏差修正？计算 $t = 1$、$\beta_1 = 0.9$、$\beta_2 = 0.999$ 时修正前后的 $m$ 与 $v$。
+- （c） 考虑一个梯度恒为 0 的参数 $w = 1$，$\eta = 0.1$、$\lambda = 0.01$、$\beta = (0.9, 0.999)$、$\epsilon = 10^{-8}$。分别用 `optim_adam(weight_decay = 0.01)` 和 `optim_adamw(weight_decay = 0.01)` 走一步，求两种情况下更新后的 $w$，并解释为什么 Adam 的 L2 正则会被“扭曲”。
+- （d） 本章建议默认使用 AdamW。什么情况下仍应优先选择 SGD + Momentum？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a） 反复代入：
+
+$$
+v_t = \eta \sum_{k=1}^{t} \gamma^{t-k} g_k.
+$$
+
+越早的梯度权重按 $\gamma$ 指数衰减。梯度恒为 $g$ 时，
+
+$$
+v_t = \eta g \sum_{j=0}^{t-1} \gamma^j \to \frac{\eta g}{1 - \gamma}.
+$$
+
+$\gamma = 0.9$ 时稳态速度为 $10\eta g$，等效学习率约为 $10\eta$。注意这只是“长期一致方向”的上界；震荡方向上历史梯度互相抵消，速度远小于此。
+
+（b） 记 $g_t = \nabla_\theta L_t$：
+
+$$
+\begin{aligned}
+m_t &= \beta_1 m_{t-1} + (1 - \beta_1) g_t, \\
+v_t &= \beta_2 v_{t-1} + (1 - \beta_2) g_t^2, \\
+\hat{m}_t &= \frac{m_t}{1 - \beta_1^t}, \qquad
+\hat{v}_t = \frac{v_t}{1 - \beta_2^t}, \\
+\theta_{t+1} &= \theta_t - \eta \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}.
+\end{aligned}
+$$
+
+$m_0 = v_0 = 0$，所以 $E[m_t] = (1 - \beta_1^t) E[g]$，初期矩估计系统性偏小。偏差修正把它除回去。$t = 1$ 时：
+
+$$
+m_1 = 0.1g,\quad \hat{m}_1 = \frac{0.1g}{1 - 0.9} = g;
+\qquad
+v_1 = 0.001g^2,\quad \hat{v}_1 = \frac{0.001g^2}{1 - 0.999} = g^2.
+$$
+
+修正后的一阶、二阶矩正好等于真实值。
+
+（c） 实测代码与结果：
+
+```r
+w <- torch_tensor(1, requires_grad = TRUE)
+opt <- optim_adam(list(w), lr = 0.1, weight_decay = 0.01)
+opt$zero_grad()
+(w * 0)$backward()          # 梯度为 0
+opt$step()
+as.numeric(w)
+# [1] 0.9000001
+
+w <- torch_tensor(1, requires_grad = TRUE)
+opt <- optim_adamw(list(w), lr = 0.1, weight_decay = 0.01)
+opt$zero_grad()
+(w * 0)$backward()
+opt$step()
+as.numeric(w)
+# [1] 0.9990000
+```
+
+推导：Adam 的 `weight_decay` 是耦合式 L2，它把 $\lambda w$ 加进梯度。此时
+
+$$
+g = 0 + 0.01 \times 1 = 0.01,\qquad
+\hat{m} = 0.01,\qquad
+\sqrt{\hat{v}} = 0.01,
+$$
+
+更新量约为 $\eta \cdot 0.01 / (0.01 + \epsilon) \approx \eta = 0.1$，所以 $w = 0.9$。注意更新量几乎与 $\lambda$ 无关——只要梯度不为零，Adam 就按约 $\eta \cdot \operatorname{sign}(g)$ 的量级走。换成 $\lambda = 0.1$，$w$ 仍然约等于 0.9，正则强度并没有随 $\lambda$ 增大 10 倍。这就是“L2 被自适应缩放扭曲”的具体含义。
+
+AdamW 把衰减解耦：自适应部分对零梯度不做任何更新，衰减直接作用于参数：
+
+$$
+w \leftarrow w - \eta \lambda w = 1 - 0.1 \times 0.01 = 0.999.
+$$
+
+（d） AdamW 的默认地位来自：对学习率不敏感、对稀疏/异质梯度友好、调参成本低，尤其适合 Transformer、Embedding 和参数量大的模型。
+
+仍应优先 SGD + Momentum 的情形包括：
+
+- 经典 CNN（如 ResNet）且有充足调参预算——精调后的 SGD 常能取得更好的泛化；
+- 显存紧张——Adam 要为每个参数额外保存一阶、二阶矩两个状态；
+- 大 batch 训练与分布式训练，已有成熟的线性缩放 + warmup 配方；
+- 需要与大量已有基线严格对齐时。
+
+一句话：AdamW 是更省心的默认值，SGD + Momentum 是值得调优的强力对手，二者都不是无条件更优。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：SGD 学习率相图
+
+用 torch 复现练习 2（a）的实验：固定 $x_0 = -10$，目标函数 $f(x) = x^2$，分别取
+
+$$
+\eta \in \{0.1,\ 0.4,\ 0.6,\ 0.9,\ 1.2\},
+$$
+
+各更新 20 步。要求：
+
+- （a） 记录每次更新后的 $x$，统计相邻两步的符号翻转次数；
+- （b） 记录 $x_{20}$，与解析解 $x_0(1-2\eta)^{20}$ 对比；
+- （c） 根据结果把每个学习率归入“单调收敛 / 震荡收敛 / 发散”，并说明 $\eta = 0.6$ 时为什么最终值很小却仍被判为“震荡”。
+
+起始代码：
+
+```r
+library(torch)
+
+run_sgd <- function(eta, x0 = -10, steps = 20) {
+  x <- torch_tensor(x0, requires_grad = TRUE)
+  opt <- optim_sgd(list(x), lr = eta)
+  xs <- numeric(steps)
+  for (t in 1:steps) {
+    opt$zero_grad()
+    loss <- x^2
+    loss$backward()
+    opt$step()
+    xs[t] <- as.numeric(x)
+  }
+  xs
+}
+```
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）（b） 完整代码：
+
+```r
+library(torch)
+
+run_sgd <- function(eta, x0 = -10, steps = 20) {
+  x <- torch_tensor(x0, requires_grad = TRUE)
+  opt <- optim_sgd(list(x), lr = eta)
+  xs <- numeric(steps)
+  for (t in 1:steps) {
+    opt$zero_grad()
+    loss <- x^2
+    loss$backward()
+    opt$step()
+    xs[t] <- as.numeric(x)
+  }
+  xs
+}
+
+for (eta in c(0.1, 0.4, 0.6, 0.9, 1.2)) {
+  xs <- run_sgd(eta)
+  flips <- sum(diff(sign(xs)) != 0)
+  cat(sprintf("eta=%.1f  x20=%+.6g  flips=%d  theory=%+.6g\n",
+              eta, xs[20], flips, -10 * (1 - 2 * eta)^20))
+}
+# eta=0.1  x20=-0.115292  flips=0   theory=-0.115292
+# eta=0.4  x20=-1.04858e-13 flips=0 theory=-1.04858e-13
+# eta=0.6  x20=-1.04858e-13 flips=19 theory=-1.04858e-13
+# eta=0.9  x20=-0.115292  flips=19  theory=-0.115292
+# eta=1.2  x20=-8366.83   flips=19  theory=-8366.83
+```
+
+注意：这里 `flips` 用 `diff(sign(xs))` 统计，只比较相邻两个记录点，所以 20 个点最多给出 19 次翻转。若把初始点 $x_0$ 也算进去，震荡情形每次更新都翻转，共 20 次。
+
+（c）
+
+| $\eta$ | 行为 | 现象 |
+|---|---|---|
+| 0.1 | 单调收敛 | 不换号，$x_{20} \approx -0.115$ |
+| 0.4 | 单调收敛 | 不换号，20 步内几乎为 0 |
+| 0.6 | 震荡收敛 | 每步换号，但幅度按 $0.2^{20}$ 缩到约 $10^{-13}$ |
+| 0.9 | 震荡收敛 | 每步换号，20 步后仍有 $0.115$ 的幅度 |
+| 1.2 | 发散 | 每步换号且幅度放大，$x_{20} \approx -8367$ |
+
+$\eta = 0.6$ 的 $x_{20}$ 接近 0，但它是“震荡着逼近 0”：每步都跨过谷底换到另一侧，只是步长按 $0.2$ 倍递减。从曲线看会看到锯齿，而不是平滑下降。因此判断收敛行为不能只看终值，还要看轨迹是否换号。
+
+:::
+
+### 练习 5：Beale 函数上的三种优化器
+
+Beale 函数
+
+$$
+f(x, y) = (1.5 - x + xy)^2 + (2.25 - x + xy^2)^2 + (2.625 - x + xy^3)^2
+$$
+
+的全局极小值在 $(3, 0.5)$，地形是一个平坦而狭长的谷。请从同一起点 $(0, 0)$ 出发，各跑 200 步：
+
+- （a） 比较 `optim_sgd(lr = 0.01)`、`optim_sgd(lr = 0.01, momentum = 0.9)`、`optim_sgd(lr = 0.05, momentum = 0.9)` 和 `optim_adam(lr = 0.1)` 的终点、到 $(3, 0.5)$ 的距离与最终损失；
+- （b） 对每个优化器做一次小的学习率扫描（SGD：0.001/0.01/0.05；Adam：0.01/0.1/0.5），记录结果；
+- （c） 为什么 SGD 的学习率稍大就“走不动”或来回震荡？为什么 Adam 对学习率更宽容？为什么动量在 200 步时可能反超 Adam？
+- （d） 这个实验能说明“Adam 一定比 SGD 好吗”？请结合步数预算解释。
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a）（b） 完整代码：
+
+```r
+library(torch)
+
+beale_loss <- function(x, y) {
+  (1.5 - x + x * y)^2 +
+    (2.25 - x + x * y^2)^2 +
+    (2.625 - x + x * y^3)^2
+}
+
+run_optim <- function(optim_func, name, lr, steps = 200) {
+  x <- torch_tensor(0.0, requires_grad = TRUE)
+  y <- torch_tensor(0.0, requires_grad = TRUE)
+  opt <- optim_func(list(x, y), lr = lr)
+  for (i in 1:steps) {
+    opt$zero_grad()
+    loss <- beale_loss(x, y)
+    loss$backward()
+    opt$step()
+  }
+  data.frame(
+    optimizer = name, lr = lr,
+    x = as.numeric(x), y = as.numeric(y),
+    dist = sqrt((as.numeric(x) - 3)^2 + (as.numeric(y) - 0.5)^2),
+    loss = as.numeric(beale_loss(x, y))
+  )
+}
+
+results <- dplyr::bind_rows(
+  run_optim(optim_sgd, "SGD", 0.001),
+  run_optim(optim_sgd, "SGD", 0.01),
+  run_optim(optim_sgd, "SGD", 0.05),
+  run_optim(function(p, lr) optim_sgd(p, lr, momentum = 0.9), "Momentum", 0.01),
+  run_optim(function(p, lr) optim_sgd(p, lr, momentum = 0.9), "Momentum", 0.05),
+  run_optim(optim_adam, "Adam", 0.01),
+  run_optim(optim_adam, "Adam", 0.1),
+  run_optim(optim_adam, "Adam", 0.5)
+)
+print(results)
+```
+
+实测（200 步）：
+
+| 优化器 | 学习率 | 终点 $(x, y)$ | 到 $(3, 0.5)$ 的距离 | 最终损失 |
+|---|---|---|---|---|
+| SGD | 0.001 | $(1.473, -0.072)$ | 1.630 | $1.95$ |
+| SGD | 0.01 | $(2.687, 0.410)$ | 0.326 | $2.27 \times 10^{-2}$ |
+| SGD | 0.05 | $(2.882, 0.402)$ | 0.154 | $8.25 \times 10^{-2}$ |
+| Momentum | 0.01 | $(2.9999, 0.49998)$ | $1.06 \times 10^{-4}$ | $1.75 \times 10^{-9}$ |
+| Momentum | 0.05 | $\text{NaN}$ | — | $\text{NaN}$ |
+| Adam | 0.01 | $(1.489, -0.012)$ | 1.596 | $1.87$ |
+| Adam | 0.1 | $(2.976, 0.494)$ | 0.0244 | $9.22 \times 10^{-5}$ |
+| Adam | 0.5 | $(2.99946, 0.49986)$ | $5.62 \times 10^{-4}$ | $4.84 \times 10^{-8}$ |
+
+（c） SGD 只看当前梯度。Beale 函数大部分区域非常平坦：梯度小，步子迈不开；靠近谷底又很狭长，学习率稍大就会在两侧来回撞。0.01 的 SGD 在 200 步内只能走到谷口；0.05 的 SGD 虽然欧氏距离更近，最终损失反而更大——在这个弯曲的窄谷里，“离最优点近”不等于“落在谷底”。
+
+动量把有效步长放大约 10 倍，`lr = 0.05` 的等效步长接近 0.5，于是直接飞出可表示范围（NaN）。这也说明：开启动量后，原来的学习率通常要调小。
+
+Adam 对每个坐标维护二阶矩，相当于按梯度的历史尺度做归一化：陡的方向自动缩小步长，平的方向自动放大步长。因此 0.1 和 0.5 都能稳定接近最优点，对学习率的容忍区间更宽。
+
+动量在 200 步时反超并不奇怪：动量积累了沿谷底的一致方向，速度越来越快，200 步恰好足够它滑进谷底；如果步数更少，你会看到它“冲过头”甚至绕圈。Adam 的收敛更平稳，但在极平坦区域前期可能走得慢。
+
+（d） 不能。这个实验固定了起点、步数和学习率集合，结论只在“200 步预算”内成立。换一个预算（例如 50 步或 1000 步）、换一组学习率，排名就可能变化。更公平的比较需要：
+
+- 为每个优化器分别调参，而不是拿一组固定学习率比较；
+- 以“达到给定损失所需的步数/总计算量”为指标；
+- 同时看泛化性能，而不只是训练损失。
+
+优化器没有绝对冠军，只有与数据、模型、预算匹配的选择。
+
+:::
+
+### 练习 6：State Dict、参数组与学习率调度
+
+- （a） 构造 `nn_linear(1, 1)` 和 `optim_sgd(momentum = 0.9)`，走一步后检查 `opt$state_dict()`：它包含哪些部分？`state` 里有几项？动量缓冲区的形状与参数有什么关系？
+- （b） 用标量参数 $w$ 和恒为 1 的梯度做 5 步 SGD（$\eta = 0.1$，$\gamma = 0.9$），记录第 5 步后的 $w$ 与动量缓冲区。然后分别“保留优化器状态继续一步”和“只用模型权重、新建优化器走一步”，比较这两次更新量。
+- （c） 用参数组给两个标量参数分别设置 $lr = 0.01$ 和 $lr = 0.1$，验证一次更新后的变化量。
+- （d） 分别打印 `lr_step`、`lr_reduce_on_plateau` 和 `lr_one_cycle` 的学习率轨迹，指出每个调度器 `step()` 的调用位置与参数要求。
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a）
+
+```r
+library(torch)
+model <- nn_linear(1, 1)
+opt <- optim_sgd(model$parameters, lr = 0.1, momentum = 0.9)
+loss <- model(torch_tensor(matrix(1)))
+loss$backward()
+opt$step()
+
+st <- opt$state_dict()
+names(st)                       # [1] "param_groups" "state"
+length(st$state)                # [1] 2
+st$state[[1]]$momentum_buffer$shape   # [1] 1 1
+st$state[[2]]$momentum_buffer$shape   # [1] 1
+```
+
+`state_dict()` 分两部分：`param_groups` 保存学习率、动量系数等超参数；`state` 为每个参数保存优化器状态。这里权重是 $1 \times 1$、偏置是长度 1，因此有两个动量缓冲区，形状与对应参数完全一致。这也解释了为什么保存检查点时必须同时保存优化器状态——否则恢复时这些缓冲区会丢失。
+
+（b） 代码与结果：
+
+```r
+w <- torch_tensor(0, requires_grad = TRUE)
+opt <- optim_sgd(list(w), lr = 0.1, momentum = 0.9)
+for (t in 1:5) {
+  opt$zero_grad()
+  (w * 1)$backward()      # 梯度恒为 1
+  opt$step()
+}
+as.numeric(w)             # [1] -1.31441
+as.numeric(opt$state_dict()$state[[1]]$momentum_buffer)  # [1] 4.0951
+
+w5 <- w$detach()$clone()
+
+# 情况 1：保留优化器状态，继续一步
+opt$zero_grad(); (w * 1)$backward(); opt$step()
+w5$item() - as.numeric(w)          # [1] 0.468559
+
+# 情况 2：只恢复模型权重，新建优化器
+w2 <- torch_tensor(w5$item(), requires_grad = TRUE)
+opt2 <- optim_sgd(list(w2), lr = 0.1, momentum = 0.9)
+opt2$zero_grad(); (w2 * 1)$backward(); opt2$step()
+w5$item() - as.numeric(w2)         # [1] 0.1
+```
+
+保留动量时，下一步的更新量约是 0.469；动量丢失后只有 0.1，相差近 5 倍。恢复训练时如果只加载模型权重，优化器会“重新起步”，Loss 曲线常出现一段明显的平台或反弹——这正是“惯性丢失”的直接后果。
+
+（c）
+
+```r
+w1 <- torch_tensor(1, requires_grad = TRUE)
+w2 <- torch_tensor(1, requires_grad = TRUE)
+opt <- optim_sgd(
+  list(
+    list(params = list(w1), lr = 0.01),
+    list(params = list(w2), lr = 0.1)
+  ),
+  lr = 0.001          # 顶层 lr 仍是必填的默认值
+)
+opt$zero_grad()
+(w1 + w2)$backward()
+opt$step()
+as.numeric(w1)   # [1] 0.99
+as.numeric(w2)   # [1] 0.90
+```
+
+两个参数的梯度都是 1，更新量分别等于各自参数组的学习率。当前版本的 `optim_sgd()` 即使传入参数组，也要求顶层 `lr`；组内的 `lr` 会覆盖它。迁移学习中冻结骨干、只训练头部，就是靠这种参数组实现的。
+
+（d） 阶梯衰减：
+
+```r
+w <- torch_tensor(1, requires_grad = TRUE)
+opt <- optim_sgd(list(w), lr = 0.1)
+sch <- lr_step(opt, step_size = 2, gamma = 0.5)
+lrs <- opt$param_groups[[1]]$lr
+for (t in 1:6) { sch$step(); lrs <- c(lrs, opt$param_groups[[1]]$lr) }
+lrs
+# 0.1000 0.1000 0.0500 0.0500 0.0250 0.0250 0.0125
+```
+
+每调用两次 `sch$step()`，学习率乘 0.5。它应放在 `optimizer$step()` 之后，这样当前这一步用的仍是旧学习率。
+
+监控式衰减：
+
+```r
+w <- torch_tensor(1, requires_grad = TRUE)
+opt <- optim_adam(list(w), lr = 0.1)
+sch <- lr_reduce_on_plateau(opt, mode = "min", factor = 0.5, patience = 1)
+lrs <- opt$param_groups[[1]]$lr
+for (l in c(5, 5, 5, 5, 5, 5)) {
+  sch$step(torch_tensor(l))
+  lrs <- c(lrs, opt$param_groups[[1]]$lr)
+}
+lrs
+# 0.1000 0.1000 0.1000 0.0500 0.0500 0.0250 0.0250
+```
+
+它必须在每步传入监控指标：`scheduler$step(loss)`（形参名是 `metrics`，本章示例直接传 loss）。连续若干轮没有刷新最好值后，学习率乘 0.5。
+
+余弦退火：
+
+```r
+w <- torch_tensor(1, requires_grad = TRUE)
+opt <- optim_adam(list(w), lr = 0.001)
+sch <- lr_one_cycle(opt, max_lr = 0.01, epochs = 10, steps_per_epoch = 1)
+lrs <- numeric(10)
+for (t in 1:10) { lrs[t] <- opt$param_groups[[1]]$lr; sch$step() }
+lrs
+# 0.00040 0.00520 0.01000 0.00950 0.00812 0.00611 0.00389 0.00188 0.00050 0.00000
+```
+
+`lr_one_cycle()` 会覆盖构造优化器时的初始学习率，并先预热到 `max_lr`，再按余弦曲线退火到 0。它要求事先知道总步数（`epochs * steps_per_epoch`），步数用超会直接报错。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：优化器、调度与混合精度的取舍
+
+请回答：
+
+- （a） 为什么 Transformer/NLP 几乎默认用 Adam(W)，而经典 CNN（ResNet 等）上 SGD + Momentum 仍有很强的竞争力？请从梯度稀疏性、泛化、显存和调参成本四个角度讨论。
+- （b） 为什么大模型、大 batch 训练通常需要 warmup？one-cycle 的“先预热、再余弦退火”解决了什么问题？
+- （c） FP16 训练为什么需要梯度缩放？哪些操作应当保留 FP32？为什么 Mac 的 MPS 后端不支持本章的 AMP 代码？
+- （d） 给出一份“训练不收敛”的排查清单，按优先级列出你最先检查的 5 项，并说明每一项对应什么症状。
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a） 四个角度的要点：
+
+- 梯度稀疏性/异质性：Embedding 中低频词的梯度偶尔才出现，Adam 的逐参数归一化能让它们获得足够步长；SGD 的共享学习率对这类参数很不友好。
+- 泛化：在经典 CNN 上，精调的 SGD + Momentum 常能找到更平坦的极小值，测试集表现有时更好；Adam 早期被认为泛化略差，AdamW 与更好的调度缓解了这一点。
+- 显存：Adam/AdamW 要为每个参数保存一阶、二阶矩，状态量约为参数量的 2 倍；SGD + Momentum 只需 1 份。
+- 调参成本：AdamW 对学习率不敏感，默认值通常可用；SGD 需要仔细调 lr、momentum、weight decay 和 schedule，但调好后很强。
+
+没有普适答案；先建立强基线，再用验证集回答“额外的复杂度买到了什么”。
+
+（b） 训练初期参数随机、梯度方向不稳定；大 batch 又对应更大的等效学习率（线性缩放），直接上大 lr 容易第一步就发散或落入坏区域。warmup 让 lr 从很小线性升到峰值，给模型时间“找到方向”。
+
+one-cycle 在 warmup 后按余弦曲线平滑退火到接近 0：前期大 lr 快速跨越平坦区，后期小 lr 精细收敛，有助于进入更平坦、泛化更好的极小值。它把“何时衰减”这个超参变成了一个显式的总步数预算，适合已知训练长度的场景。
+
+（c） FP16 只有 16 位，最大值约 65504，最小正规数约 $6.1 \times 10^{-5}$；训练后期的微小梯度会下溢为 0，网络因此“死掉”。梯度缩放把 Loss 乘以一个大的 $S$（如 65536），反向得到放大后的梯度，更新前再除回去：
+
+$$
+w_{t+1} = w_t - \eta \frac{\nabla (L \times S)}{S}.
+$$
+
+应保留 FP32 的操作：Softmax、交叉熵、LayerNorm/BatchNorm 的统计量、损失累加，以及任何对溢出/下溢敏感的量。矩阵乘法和卷积可以走 FP16/BF16。
+
+Mac 的 MPS 后端没有 NVIDIA Tensor Core 的 AMP 支持，也没有对应的 `cuda_amp_grad_scaler`；本章的 `with_autocast(“cuda”, ...)` 代码需要 CUDA 设备。可以在 CPU/MPS 上用小规模 FP32 实验理解逻辑，但无法复现显存与速度收益。
+
+（d） 一份可操作的清单：
+
+1. 看 Loss 是否为 NaN/Inf：若是，先降 lr 10 倍、加梯度裁剪，再检查 AMP 的 scaler 与数据中是否有极端值。
+2. 看 Loss 是否震荡：如果上下大幅跳动，lr 太大或 batch 太小；降 lr、加 scheduler、增大 batch。
+3. 看 Loss 是否完全不动：检查 `zero_grad()` 是否漏写/写错位置、参数是否被冻结、损失是否用错、学习率是否小到无效。
+4. 看梯度范数：长期接近 0 可能是死亡 ReLU、饱和激活或梯度消失；异常大则可能是初始化或 lr 问题。
+5. 看训练/验证曲线：训练降而验证不降是过拟合；两者都不降是欠拟合或优化问题；验证先降后升要加正则或早停。
+
+先排除“数值爆炸”和“根本没在学”这两类硬故障，再讨论调参和模型结构。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：训练循环里的四个 bug
+
+下面四段代码都能运行，但都有问题。请指出错误、描述症状，并给出修正。
+
+（a）梯度裁剪的位置
+
+```r
+loss$backward()
+optimizer$step()
+nn_utils_clip_grad_norm_(model$parameters, max_norm = 1.0)
+```
+
+（b）只保存模型权重的检查点
+
+```r
+torch_save(model$state_dict(), "ckpt.pt")
+
+# 恢复训练
+model$load_state_dict(torch_load("ckpt.pt"))
+optimizer <- optim_adam(model$parameters, lr = 1e-3)
+```
+
+（c）AMP 训练循环
+
+```r
+for (i in 1:50) {
+  opt$zero_grad()
+  with_autocast("cuda", {
+    loss <- nnf_cross_entropy(model(x), y)
+  })
+  loss$backward()
+  opt$step()
+}
+```
+
+（d）监控式学习率调度
+
+```r
+scheduler <- lr_reduce_on_plateau(
+  optimizer, mode = "min", factor = 0.1, patience = 10
+)
+
+for (t in 1:epochs) {
+  optimizer$zero_grad()
+  loss$backward()
+  optimizer$step()
+  scheduler$step()
+}
+```
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a） 裁剪发生在 `optimizer$step()` 之后，对当前这一步完全没有作用：参数已经用未裁剪的梯度更新完了。如果梯度确实爆炸，NaN 仍会出现。更糟的是，裁剪后的梯度会一直留在 `grad` 里，直到下一次清零，容易造成难以察觉的偏差。
+
+症状：加了裁剪仍然 NaN，或者裁剪形同虚设。
+
+修正：严格放在 `backward()` 之后、`step()` 之前：
+
+```r
+loss$backward()
+nn_utils_clip_grad_norm_(model$parameters, max_norm = 1.0)
+optimizer$step()
+```
+
+（b） 只保存模型权重，动量/Adam 的一阶、二阶矩全部丢失；恢复后优化器相当于从零状态重新开始。症状：恢复训练后的前若干步更新量明显偏小或方向异常，Loss 出现平台、反弹或震荡，学习率调度器的进度也丢失。
+
+修正：把模型、优化器（必要时还有调度器）一起保存：
+
+```r
+torch_save(list(
+  model = model$state_dict(),
+  optimizer = optimizer$state_dict(),
+  scheduler = scheduler$state_dict()
+), "ckpt.pt")
+
+# 恢复
+ckpt <- torch_load("ckpt.pt")
+model$load_state_dict(ckpt$model)
+optimizer$load_state_dict(ckpt$optimizer)
+scheduler$load_state_dict(ckpt$scheduler)
+```
+
+如果只是导出模型做推理，只保存权重当然可以；但“断点续训”必须保存优化器状态。
+
+（c） 缺少 `cuda_amp_grad_scaler`。在 autocast 下，反向传播得到的 FP16 梯度可能下溢为 0，参数收不到有效更新。症状：Loss 长时间不降、梯度范数大量为 0。
+
+修正：
+
+```r
+scaler <- cuda_amp_grad_scaler()
+
+for (i in 1:50) {
+  opt$zero_grad()
+  with_autocast("cuda", {
+    loss <- nnf_cross_entropy(model(x), y)
+  })
+  scaler$scale(loss)$backward()
+  scaler$step(opt)
+  scaler$update()
+}
+```
+
+`scale()` 放大 Loss，`step()` 在内部反缩放并检查溢出（必要时跳过这一步），`update()` 根据是否溢出动态调整缩放因子。三者顺序不能乱。
+
+（d） `lr_reduce_on_plateau` 需要监控指标才能判断“是否还在进步”，而这里的 `scheduler$step()` 没有传任何指标。当前版本会直接报“缺少参数 metrics”的错误；即使某些封装把它吞掉，调度器也不会真正工作，学习率永远不变。
+
+症状：运行时报错，或训练全程 lr 恒定，Loss 后期不再改善。
+
+修正：
+
+```r
+scheduler$step(loss)     # 必须传入监控指标
+```
+
+同时注意它应放在 `optimizer$step()` 之后；`lr_step` 和 `lr_one_cycle` 虽然不需要传 loss，也同样建议放在参数更新之后，保证当前步使用的是本步的学习率。
+
+:::

@@ -1,0 +1,913 @@
+# 06 工程化实验 {.unnumbered}
+
+本章从数据管道、偏差-方差、正则化，一路讲到 `luz` 工作流和超参数调优，工程细节很多。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：偏差-方差分解、权重衰减、批归一化。
+- 编程实践（练习 4–6）：惰性 `Dataset`、Dropout/BN 实测、`luz` 训练流程。
+- 开放思考（练习 7）：学习率查找、网格/随机搜索、贝叶斯优化。
+- 纠错与陷阱（练习 8）：四个在真实项目里经常出现的 bug。
+
+建议用时约 3.5–4 小时；如果时间有限，可以先做练习 1、2、5、8，把练习 6 留到有完整数据管线时再做。题目中的数值来自固定随机种子的参考运行，你的结果会有小幅波动；凡是写“约”的地方，不必逐位对齐。
+
+## 一、概念与推导
+
+### 练习 1：偏差-方差分解与三份数据
+
+设真实关系为
+
+$$
+y = f(x) + \varepsilon,
+$$
+
+其中 $\mathbb E[\varepsilon]=0$、$\operatorname{Var}(\varepsilon)=\sigma^2$，并且噪声 $\varepsilon$ 与训练得到的预测 $\hat f(x)$ 独立。
+
+（a） 证明对任意固定的 $x$，有
+
+$$
+\mathbb E\big[(y-\hat f(x))^2\big]
+= \big(f(x)-\mathbb E[\hat f(x)]\big)^2
++ \operatorname{Var}\big(\hat f(x)\big)
++ \sigma^2.
+$$
+
+（b） 某数据集共有 2930 行。先用 `initial_split(prop = 0.8)` 切出测试集，再对剩余部分用 `initial_split(prop = 0.75)` 切出验证集。训练集、验证集、测试集各有多少行？如果反复用测试集挑选超参数，测试误差会偏大还是偏小？为什么？
+
+（c） 下表列出训练损失与验证损失的三种典型组合。请分别给出诊断，并为每种情况列出至少两条工程对策。
+
+| 训练损失 | 验证损失 | 诊断 |
+| :--- | :--- | :--- |
+| 高 | 高 | ？ |
+| 低 | 高 | ？ |
+| 低 | 低 | ？ |
+
+（d） 本章提到：线性回归、朴素贝叶斯、非核 SVM、决策树等“一步到位”的模型可以不需要验证集来监控训练；而深度网络、XGBoost 等“逐步优化”的模型需要。请解释这句话的含义。是否意味着前者完全不需要验证集？
+
+:::{.callout-note collapse="true"}
+# 练习 1 参考答案
+
+（a） 分解。
+
+记 $f=f(x)$、$\hat f=\hat f(x)$，则 $y-\hat f=(f-\hat f)+\varepsilon$。展开平方：
+
+$$
+\mathbb E[(y-\hat f)^2]
+= \mathbb E[(f-\hat f)^2]
++ 2\,\mathbb E[\varepsilon(f-\hat f)]
++ \mathbb E[\varepsilon^2].
+$$
+
+因为 $\varepsilon$ 与 $\hat f$ 独立，且 $\mathbb E[\varepsilon]=0$，交叉项为 $0$；最后一项为 $\sigma^2$。再对第一项加减 $\mathbb E[\hat f]$：
+
+$$
+\begin{aligned}
+\mathbb E[(f-\hat f)^2]
+&= \mathbb E\left[\big((f-\mathbb E\hat f)-(\hat f-\mathbb E\hat f)\big)^2\right] \\
+&= (f-\mathbb E\hat f)^2
+- 2(f-\mathbb E\hat f)\,\mathbb E[\hat f-\mathbb E\hat f]
++ \mathbb E[(\hat f-\mathbb E\hat f)^2] \\
+&= \operatorname{Bias}^2(\hat f) + \operatorname{Var}(\hat f).
+\end{aligned}
+$$
+
+中间交叉项因为 $\mathbb E[\hat f-\mathbb E\hat f]=0$ 而消失。把 $x$ 上的逐点分解积分（或取期望），就得到全局的偏差-方差分解。注意：偏差和方差都是针对“重复采样训练集”这一随机过程而言的；只训练一次时，我们看到的只是其中一个实现。
+
+（b） 数据划分。
+
+- 测试集：$2930\times 0.8=2344$ 行用于“训练 + 验证”，剩下 $586$ 行是测试集。
+- 验证集：$2344\times 0.75=1758$ 行是训练集；$2344\times 0.25=586$ 行是验证集。
+
+因此约为 1758 / 586 / 586，即 60% / 20% / 20%。如果反复用测试集挑超参数、选模型结构或决定早停轮数，测试集就参与了模型选择，成了“第二个验证集”。此时报告出来的测试误差会偏小（乐观偏差），因为它已经不能再代表模型对真正未见数据的表现。正确做法是：训练集拟合参数，验证集做所有选择，测试集只在最后评估一次。
+
+（c） 诊断与对策。
+
+| 训练损失 | 验证损失 | 诊断 | 对策 |
+| :--- | :--- | :--- | :--- |
+| 高 | 高 | 欠拟合，高偏差 | 增加模型容量（加宽/加深网络）；减少正则化；增加或构造更有信息量的特征；检查学习率是否过小、训练轮数是否不足 |
+| 低 | 高 | 过拟合，高方差 | 收集更多数据；使用权重衰减、Dropout、数据增强；降低模型容量；早停 |
+| 低 | 低 | 拟合良好 | 保持现状；若业务允许，可尝试更多数据或略增容量，但不必为训练损失继续“压榨” |
+
+如果出现“训练高、验证低”，先不要高兴，通常要检查数据泄漏、划分方式或验证集是否过简单，而不是把它当作模型优秀的证据。
+
+（d） 一步到位 vs 逐步优化。
+
+“一步到位”指模型参数由一次闭式求解或一次固定的贪心过程确定，训练过程中没有“第几个 epoch 该停”“学习率该降多少”这类连续决策。例如线性回归解一次正规方程，朴素贝叶斯数一次频率，非核 SVM 解一次凸优化，决策树按固定规则递归分裂。它们仍然可能需要验证集来选模型复杂度（多项式次数、$\lambda$、树深、剪枝强度），但不需要在训练中途用验证损失来监控和干预。
+
+深度网络和 XGBoost 则不同：参数通过许多次迭代逐步更新，训练轮数、学习率、早停点、正则化强度都会改变最终模型。没有验证集，你就无法判断当前是欠拟合还是已经过拟合，也无法决定何时停止；这不是“模型能不能训练”的问题，而是“训练过程是否可控”的问题。所以“可以不用验证集监控训练”不等于“完全不需要验证集”。
+
+:::
+
+### 练习 2：权重衰减的三张面孔
+
+本章把权重衰减写成
+
+$$
+L_{\text{total}} = L_{\text{original}} + \frac{\lambda}{2}\sum_j w_j^2.
+$$
+
+（a） 推导单步 SGD 的更新公式，并解释为什么它叫“衰减”。取 $w=1$、原始梯度 $\partial L_{\text{original}}/\partial w=1$、学习率 $\eta=0.1$、$\lambda=0.01$，计算一步之后 $w$ 的值；再计算 $\lambda=0$ 时的值。优化器的 `$grad` 字段会显示 $1$ 还是 $1.01$？
+
+（b） 从贝叶斯角度解释：为什么 L2 正则等价于给权重加一个均值为 0 的高斯先验？$\lambda$ 越大，先验的方差越大还是越小？
+
+（c） 为什么实践中通常不对偏置项 $b$ 做权重衰减？为什么深层网络很少把 L1 作为默认正则化手段？
+
+（d） 在第 5 章我们看到 Adam 与 AdamW 的差异。若在 Adam 里使用 L2 惩罚，和 `optim_adamw(weight_decay=...)` 的“解耦权重衰减”有什么不同？为什么本章的 `luz` 示例选用 AdamW？
+
+:::{.callout-note collapse="true"}
+# 练习 2 参考答案
+
+（a） 推导与数值。
+
+对 $L_{\text{total}}$ 求导：
+
+$$
+\frac{\partial L_{\text{total}}}{\partial w}
+= \frac{\partial L_{\text{original}}}{\partial w} + \lambda w.
+$$
+
+SGD 更新为
+
+$$
+\begin{aligned}
+w_{\text{new}}
+&= w - \eta\left(\frac{\partial L_{\text{original}}}{\partial w} + \lambda w\right) \\
+&= (1-\eta\lambda)w - \eta\frac{\partial L_{\text{original}}}{\partial w}.
+\end{aligned}
+$$
+
+第一项先把权重乘上 $1-\eta\lambda<1$，所以叫“衰减”；第二项才是原始梯度推动的参数更新。
+
+代入数值：$1-\eta\lambda = 1-0.1\times0.01=0.999$，于是
+
+$$
+w_{\text{new}} = 0.999\times 1 - 0.1\times 1 = 0.899.
+$$
+
+没有权重衰减时，$w_{\text{new}}=1-0.1=0.9$。这 $0.001$ 的差距就是一步衰减的贡献。
+
+一个容易忽略的细节：在 R torch 中，`optim_sgd(..., weight_decay = 0.01)` 的 `$grad` 字段仍然显示原始梯度 $1$，因为权重衰减是在 `step()` 内部加到更新量上的，不会回写到 `.grad`。如果你显式地把 $\lambda w^2/2$ 写进损失函数，`.grad` 才会显示 $1.01$。两种写法在普通 SGD 的一步更新上等价，但前者不会污染你打印出来的梯度。
+
+（b） 贝叶斯解释。
+
+设先验
+
+$$
+p(w) \propto \exp\left(-\frac{\lambda}{2}\|w\|^2\right),
+$$
+
+这正是各分量独立、均值为 0、方差为 $1/\lambda$ 的高斯分布。若似然对应 $p(\mathcal D\mid w)\propto \exp(-L_{\text{original}})$，则对数后验为
+
+$$
+\log p(w\mid\mathcal D)
+= -L_{\text{original}}(w) - \frac{\lambda}{2}\|w\|^2 + \text{常数}.
+$$
+
+最大化后验（MAP）等价于最小化 $L_{\text{total}}$。所以 $\lambda$ 越大，先验方差 $1/\lambda$ 越小，权重被更紧地拉向 0，正则越强。若把 MSE 写成 $L=\frac{1}{2\sigma^2}\sum_i(y_i-\hat y_i)^2$，并令先验方差为 $\tau^2$，则对应 $\lambda=\sigma^2/\tau^2$：噪声越大或先验越窄，惩罚越强。
+
+（c） 偏置与 L1。
+
+偏置只改变激活函数的平移/阈值，不乘以特征，通常不会像大权重那样放大输入的微小波动；对它做衰减主要会让模型更容易欠拟合，而不是有效控制方差。很多实现因此只对权重（`nn_linear` 的 `weight`）做衰减，把 `bias` 排除在参数组之外。
+
+L1 的梯度是常数符号项，会把不重要的权重精确压到 0。在浅层线性模型里这意味着特征选择，有明确的业务解释；但在深度网络里，大量权重被压到 0 会切断前向信息和反向梯度，造成“死神经元”，而且 L1 在 0 点不可导，优化更不稳定。L2 则是平滑收缩，训练更容易，所以是默认选择；L1 更多用于压缩、剪枝或确实需要稀疏性的场景。
+
+（d） Adam 与 AdamW。
+
+在 Adam 中，若把 L2 惩罚加进损失，梯度变成 $g+\lambda w$，随后又被 Adam 的逐参数二阶矩估计 $\sqrt{\hat v}$ 除。结果是：历史梯度较小的参数，其有效衰减反而更强；衰减强度和自适应学习率耦合在一起，$\lambda$ 的语义不再干净。
+
+AdamW 把衰减从梯度里拿出来，直接对参数做
+
+$$
+w \leftarrow (1-\eta\lambda)w
+$$
+
+（或等价的解耦更新），自适应部分只处理原始梯度。这样 $\lambda$ 的含义接近“每步按固定比例收缩”，不再被 $\sqrt{\hat v}$ 扭曲。本章的 `luz` 示例使用 `optim_adamw`，是因为它在带权重衰减的深度网络上更稳健，超参数也更好解释。注意：在普通 SGD 下，显式 L2 惩罚和优化器的 `weight_decay` 基本等价；到了 Adam，这个等价关系不再成立。
+
+:::
+
+### 练习 3：BatchNorm 的两步与两种模式
+
+批归一化先做标准化，再做仿射变换：
+
+$$
+\hat x = \frac{x-\mu_{\mathcal B}}{\sqrt{\sigma_{\mathcal B}^2+\epsilon}},
+\qquad
+x_{\text{out}} = \gamma\hat x+\beta.
+$$
+
+（a） 对一个批次 $x=(1,2,3,4,5)$，取 $\epsilon=0$，计算 $\mu_{\mathcal B}$、$\sigma_{\mathcal B}^2$（按总体方差，除以 5）、每个 $\hat x$，并验证 $\hat x$ 的均值为 0、方差为 1。
+
+（b） 若 $\gamma=2$、$\beta=10$，写出输出 $x_{\text{out}}$ 的均值和方差。默认初始化 $\gamma=1$、$\beta=0$ 时，BN 的输出是什么？如果 $\gamma=0$ 会发生什么？
+
+（c） 训练模式和评估模式分别使用什么统计量？`running_mean`、`running_var` 如何更新？为什么评估时不能继续用当前批次的统计量？以一个 1000 个样本、均值约 10、标准差约 2 的批次为例，说明“只更新一次 running stats”时评估输出为什么还远离原始分布。
+
+（d） BN 为什么能起到正则化作用、并允许更大的学习率？在全连接网络中，BN、线性层、激活函数、Dropout 的常见顺序是什么？
+
+:::{.callout-note collapse="true"}
+# 练习 3 参考答案
+
+（a） 标准化。
+
+$$
+\mu_{\mathcal B}=\frac{1+2+3+4+5}{5}=3,
+$$
+
+$$
+\sigma_{\mathcal B}^2
+=\frac{(1-3)^2+(2-3)^2+0^2+(4-3)^2+(5-3)^2}{5}
+=\frac{4+1+0+1+4}{5}=2.
+$$
+
+所以
+
+$$
+\hat x
+=\left(
+-\frac{2}{\sqrt2},
+-\frac{1}{\sqrt2},
+0,
+\frac{1}{\sqrt2},
+\frac{2}{\sqrt2}
+\right)
+=(-\sqrt2,-\tfrac{\sqrt2}{2},0,\tfrac{\sqrt2}{2},\sqrt2).
+$$
+
+均值为 $0$；平方和为 $2+0.5+0+0.5+2=5$，除以 5 得方差 $1$。这正是“减均值、除标准差”的效果。
+
+（b） 仿射变换。
+
+$$
+x_{\text{out}} = 2\hat x+10
+= (10-2\sqrt2,\ 10-\sqrt2,\ 10,\ 10+\sqrt2,\ 10+2\sqrt2).
+$$
+
+均值变为 $10$，方差变为 $\gamma^2\operatorname{Var}(\hat x)=4$，标准差为 $2$。也就是说，BN 先把特征标准化，再让网络自己学一个想要的均值和尺度；默认 $\gamma=1,\beta=0$ 时输出就是标准化后的 $\hat x$，相当于“先不改变分布”。如果 $\gamma=0$，该特征的所有输出都变成常数 $\beta$，这个通道的信息被彻底切断；这也是为什么初始化不能是 0，以及为什么 BN 的 $\gamma$ 需要参与训练。
+
+（c） 训练与评估的统计量。
+
+- 训练模式：用当前批次的 $\mu_{\mathcal B}$、$\sigma_{\mathcal B}^2$ 做标准化；同时更新运行统计量（默认动量 $m=0.1$）：
+
+$$
+\begin{aligned}
+\text{running\_mean} &\leftarrow (1-m)\,\text{running\_mean} + m\,\mu_{\mathcal B},\\
+\text{running\_var} &\leftarrow (1-m)\,\text{running\_var} + m\,\sigma_{\mathcal B,\text{unbiased}}^2.
+\end{aligned}
+$$
+
+- 评估模式：不再看当前批次，而是用累积的 `running_mean`、`running_var` 做标准化。这样预测是确定性的，不随同一批次里其他样本变化。
+
+`running_var` 初始化为 1，所以“只更新一次”并不会立刻得到批次的方差。以 $x\sim\mathcal N(10,2^2)$、$n=1000$ 为例，固定种子下实测：
+
+- 训练输出均值约 $0$、方差约 $1$（用 R 的 `var()` 是无偏版本，约 $1.001$）。
+- 一次更新后 `running_mean` 约 $0.999$（$0.1\times 9.992$），`running_var` 约 $1.306$（$0.9\times1+0.1\times4.063$）。
+- 此时直接 `eval()`，输出均值约 $7.87$、标准差约 $1.76$，离原始均值 10、标准差 2 还很远。
+
+运行统计量需要许多个 batch 才能收敛。这也解释了为什么“训练一个 epoch 就立刻推理”往往得到奇怪的输出，以及为什么评估必须切到 `eval()`：如果继续用当前批次的统计量，预测会依赖同批的其他样本，部署时 batch 组成一变，结果就变；如果 BN 在训练模式下被验证数据调用，还会把验证集的统计量写进 running stats，造成一种隐蔽的泄漏。
+
+（d） 正则化与顺序。
+
+BN 的批次统计量本身是带噪声的估计，这个噪声让网络不能过度依赖某一组精确的激活值，起到类似 Dropout 的正则化效果；同时它把每层输入的尺度稳定下来，使损失曲面更平滑，优化器可以用更大的学习率而不至于梯度爆炸或消失。批次越小，统计噪声越大，正则效果越明显，但训练也越不稳定。
+
+全连接网络的经典顺序是
+
+$$
+\text{Linear} \rightarrow \text{BN} \rightarrow \text{ReLU} \rightarrow \text{Dropout}.
+$$
+
+BN 放在线性层之后、激活函数之前，是原始论文推荐的“先归一化再激活”；Dropout 放在激活之后，丢弃的是已经非线性的激活值。不同架构可能有变体（例如预激活网络），但初学时先记住这个经典顺序，并注意 BN 与 Dropout 同时使用时可能有一定冗余，需要通过验证集调参。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：惰性 CSV `Dataset` 与变长批次
+
+假设 `data_dir` 下有 50 个 CSV 文件，每个文件只有一行，列为 `feature1`、`feature2`、`label`。
+
+（a） 用 `dataset()` 实现 `CSVFolderDataset`：`initialize` 只记录文件路径，`.getitem` 只读取当前索引对应的那一个文件，`.length` 返回文件数。实例化后检查：`length(ds)` 是多少？第 1 个样本的 `x`、`y` 形状分别是什么？
+
+（b） 用 `dataloader(ds, batch_size = 4, shuffle = TRUE)` 遍历一遍。共有多少个批次？最后一个批次的 `x` 形状是什么？如果设置 `drop_last = TRUE`，批次数量会变成多少？为什么训练集通常 `shuffle = TRUE`，而验证/测试集不 shuffle？
+
+（c） 构造一个返回长度 1–5 随机向量的 `VarLenDataset`，写一个 `pad_collate()`，用 `nn_utils_rnn_pad_sequence(batch, batch_first = TRUE, padding_value = 0)` 把一个大小为 3 的批次补齐。输出的形状是什么？较短序列的尾部被填了什么？`batch_first = TRUE` 与默认值有什么区别？
+
+（d） `num_workers = N` 的作用是什么？本章给出的经验公式是什么？在 Windows 和 Linux/macOS 上设置有什么不同？使用多进程时，`Dataset` 需要满足哪些额外条件？
+
+:::{.callout-note collapse="true"}
+# 练习 4 参考答案
+
+（a） 惰性 CSV Dataset。
+
+```r
+CSVFolderDataset <- dataset(
+  name = "CSVDataset",
+
+  initialize = function(path) {
+    # 只扫描文件名，不读取内容
+    self$files <- list.files(
+      path, full.names = TRUE, pattern = "\\.csv$"
+    )
+  },
+
+  .getitem = function(index) {
+    # 关键：读当前索引对应的文件，而不是构造参数 path
+    raw_data <- read.csv(self$files[index])
+
+    x <- torch_tensor(
+      as.numeric(raw_data[1, 1:2]), dtype = torch_float()
+    )
+    y <- torch_tensor(
+      as.numeric(raw_data[1, 3]), dtype = torch_float()
+    )
+
+    list(x = x, y = y)
+  },
+
+  .length = function() {
+    length(self$files)
+  }
+)
+
+disk_ds <- CSVFolderDataset(data_dir)
+length(disk_ds)          # 50
+sample_1 <- disk_ds[1]
+sample_1$x$shape         # torch.Size([2])
+sample_1$y$shape         # torch.Size([1])
+```
+
+`initialize` 里只有 50 个路径字符串，内存占用极低；真正的文件读取发生在 `.getitem()`。如果数据是 1 TB 的图片或文本，这个模式才能跑得起来。注意用 `self$files[index]`；`.getitem` 的作用域里没有 `initialize` 的局部变量 `path`，写成 `read.csv(path)` 会报“找不到对象 `path`”（见练习 8）。
+
+（b） 批次与 shuffle。
+
+50 个样本、`batch_size = 4`：
+
+- 前 12 个批次是 `[4, 2]`，最后剩 2 个样本，形成 `[2, 2]` 的尾批；一共 13 个批次。
+- 标签批次相应为 `[4, 1]` 和 `[2, 1]`。
+- 若 `drop_last = TRUE`，尾批被丢弃，只剩 12 个批次；当 BatchNorm 或某些固定形状的操作不能处理尾批时，这个参数很有用，但会损失少量样本。
+
+```r
+train_dl <- dataloader(disk_ds, batch_size = 4, shuffle = TRUE)
+it <- train_dl$.iter()
+batch <- it$.next()
+batch$x$shape   # torch.Size([4, 2])
+batch$y$shape   # torch.Size([4, 1])
+```
+
+训练集 shuffle 的目的是每个 epoch 看到不同的批次组合，打破样本顺序带来的伪相关，也让 mini-batch 梯度成为更有代表性的噪声估计。验证/测试集不 shuffle，是为了让评估结果可复现，并且方便逐样本对比；shuffle 不会改变平均损失，但会让调试和可视化更麻烦。
+
+（c） 变长批次与 padding。
+
+```r
+VarLenDataset <- dataset(
+  name = "VarLen",
+  initialize = function() {},
+  .getitem = function(index) {
+    len <- sample(1:5, 1)
+    torch_randn(len)
+  },
+  .length = function() 10
+)
+
+pad_collate <- function(batch) {
+  nn_utils_rnn_pad_sequence(
+    batch, batch_first = TRUE, padding_value = 0
+  )
+}
+
+vl_dl <- dataloader(
+  VarLenDataset(), batch_size = 3, collate_fn = pad_collate
+)
+vl_dl$.iter()$.next()
+```
+
+默认的 collate 假设每个样本形状相同，会用 `torch_stack` 直接堆叠；长度不一致就会报错。自定义 `collate_fn` 接收一个长度为 `batch_size` 的列表，负责把它们拼成张量。`pad_sequence` 会在较短序列末尾补 `padding_value`，输出形状为 `[B, L_max]`（当 `batch_first = TRUE`）。固定种子下的一个参考批次：
+
+```text
+torch_tensor
+-0.1468  0.7861  0.0000  0.0000
+ 0.9468 -1.1143  1.6908  0.0000
+-0.8948 -0.3556  1.2324  0.1382
+[ CPUFloatType{3,4} ]
+```
+
+三行的长度分别是 2、3、4，所以最大长度是 4，短行尾部补 0。如果 `batch_first = FALSE`（默认），输出形状是 `[L_max, B]`，更符合循环网络按时间步展开的习惯；两种布局本身没有对错，但要和后续模型/`pack_padded_sequence` 的约定一致。还要记住：padding 只是把形状凑齐，0 仍然是模型看得见的输入；在 RNN 中要配合 mask 或 packed sequence，否则模型会把 padding 当成真实数据。
+
+（d） 多进程加载。
+
+数据加载常常是训练瓶颈：GPU 算得快，CPU 还在慢慢读 CSV、解压 JPEG。`num_workers = N` 会开 $N$ 个后台 R 进程并行准备批次。本章给出的近似公式是
+
+$$
+\text{总时间} \approx \max\left(\text{GPU 计算时间},\ \frac{\text{数据加载时间}}{N}\right).
+$$
+
+平台差异：
+
+- Windows：R 的并行基于 PSOCK，启动和通信开销较大，通常设 0 或 2；设得太大反而更慢。
+- Linux/macOS：基于 fork，开销较小，可以设成 CPU 核心数的一半左右，再根据实际吞吐调整。
+
+多进程时要注意：`Dataset` 的逻辑要线程/进程安全；不要在 `initialize` 里建立数据库连接，而应在 `.getitem` 里建立；文件句柄、随机数状态、全局缓存都可能被多个 worker 共享或复制，行为要和单进程一致。对于已经全在内存里的小数据集（例如 `tensor_dataset`），`num_workers = 0` 往往最快；只有数据加载确实成为瓶颈时，增加 worker 才有意义。worker 也不是越多越好，调度和进程间传输本身有成本。
+
+:::
+
+### 练习 5：Dropout 与 BatchNorm 的实测
+
+（a） 对一个全是 1、形状为 `[10000, 1]` 的张量使用 `nn_dropout(0.3)`。在 `train()` 模式下统计：零元素比例、整体均值、非零元素的均值。再切到 `eval()` 模式统计零元素比例和均值。解释“inverted dropout”为什么在评估时不需要再缩放。
+
+（b） 令 `x <- torch_randn(1000, 1) * 2 + 10`，即均值约 10、标准差约 2。构建 `nn_batch_norm1d(1)`，在训练模式下前向一次，记录输出的均值/方差、`running_mean`、`running_var`；再切到评估模式，用同一批 $x$ 前向，记录输出的均值和标准差。为什么评估输出不是均值 10、标准差 2？
+
+（c） 在 (b) 的基础上，把 `running_mean`、`running_var` 手动设为当前批次的统计量，把 `weight`（即 $\gamma$）设为 2、`bias`（即 $\beta$）设为 10，再在评估模式下前向。输出的均值和标准差是多少？这说明了什么？
+
+（d） 为什么验证/推理前必须调用 `model$eval()`？如果忘了，会发生什么？请写出一个正确的评估片段，并说明 `with_no_grad()` 的作用。
+
+:::{.callout-note collapse="true"}
+# 练习 5 参考答案
+
+（a） Dropout 实测。
+
+```r
+x <- torch_ones(10000, 1)
+d <- nn_dropout(0.3)
+
+d$train()
+y <- d(x)
+mean(as.numeric(y) == 0)          # 约 0.295
+mean(as.numeric(y))               # 约 1.007
+nonzero <- as.numeric(y[y != 0])
+mean(nonzero)                     # 约 1.4286
+
+d$eval()
+y_eval <- d(x)
+mean(as.numeric(y_eval) == 0)     # 0
+mean(as.numeric(y_eval))          # 1
+```
+
+固定种子下实测：训练模式约有 29.5% 的元素被置零，整体均值约 1.007，存活元素的均值约 1.4286 $=1/(1-0.3)$。也就是说，每个存活元素被放大了 $1/(1-p)$ 倍，从而让整层的期望输出保持为 1；评估模式则完全不丢弃、也不缩放，输出恒等于输入。
+
+这就是 inverted dropout：把“评估时要乘 $1-p$”的缩放挪到了训练阶段。好处是推理路径简单、没有额外乘法，而且训练和评估的期望一致。每次调用 `d$train()` 后的前向都会重新采样 mask，所以连续两次 `d$train(); d(x)` 的结果不同；`d$eval()` 才是确定性的。
+
+（b） BatchNorm 的训练/评估差异。
+
+```r
+x <- torch_randn(1000, 1) * 2 + 10
+bn <- nn_batch_norm1d(1)
+
+bn$train()
+out <- bn(x)
+mean(as.numeric(out))             # 约 0
+var(as.numeric(out))              # 约 1.001（R 的 var 是无偏版本）
+as.numeric(bn$running_mean)       # 约 0.999
+as.numeric(bn$running_var)        # 约 1.306
+
+bn$eval()
+out_eval <- bn(x)
+mean(as.numeric(out_eval))        # 约 7.87
+sd(as.numeric(out_eval))          # 约 1.76
+```
+
+训练模式下，BN 用当前批次的均值 $\mu_{\mathcal B}\approx9.992$ 和方差 $\sigma_{\mathcal B}^2\approx4.059$ 做标准化，所以输出均值约 0、方差约 1。与此同时，running stats 按动量 0.1 更新：
+
+$$
+\text{running\_mean}=0.9\times0+0.1\times9.992\approx0.999,
+$$
+
+$$
+\text{running\_var}=0.9\times1+0.1\times4.063\approx1.306.
+$$
+
+注意 `running_var` 初始化是 1，不是 0；而且更新用的是无偏方差（$4.063$），训练标准化用的是有偏方差（$4.059$），两者只差 $n/(n-1)$ 的修正。
+
+评估模式下，BN 用还没收敛的 running stats：$(9.992-0.999)/\sqrt{1.306}\approx7.87$，所以输出均值是 7.87 而不是 10。running stats 需要很多个批次才逐渐逼近真实分布；这也说明“训练几个 step 就评估”看到的结果可能很不可靠。评估输出标准差约 1.76，同样是因为分母用了偏小的 running variance。
+
+（c） 仿射参数恢复分布。
+
+```r
+mu <- mean(as.numeric(x))
+va <- mean((as.numeric(x) - mu)^2)   # 有偏方差
+
+with_no_grad({
+  bn$running_mean$fill_(mu)
+  bn$running_var$fill_(va)
+  bn$weight$fill_(2)                 # gamma
+  bn$bias$fill_(10)                  # beta
+})
+
+bn$eval()
+out2 <- bn(x)
+mean(as.numeric(out2))               # 10.000
+sd(as.numeric(out2))                 # 2.001
+```
+
+输出均值 10.000、标准差约 2.001。均值精确回到 10；标准差末尾的 0.001 来自有偏/无偏方差的定义差异：这里把 `running_var` 填成了有偏方差，而 `x` 的样本标准差是无偏的，二者相差 $n/(n-1)$。如果严格按 running stats 通常存储无偏方差来填，结果会精确到约 2.000（再扣掉 $\epsilon$ 的微小影响）。
+
+这个实验说明：BN 的标准化把分布压成均值 0、方差 1，而 $\gamma$、$\beta$ 是可学习的“还原/重塑”参数。默认 $\gamma=1,\beta=0$ 时输出就是标准化结果；网络可以根据任务需要学出任意均值和尺度，甚至让某个通道接近常数（$\gamma\approx0$）。
+
+（d） 评估模式与 `with_no_grad()`。
+
+如果验证时忘了 `model$eval()`：
+
+- Dropout 仍然开着，每次验证的预测都是随机的，验证损失会抖动，早停/模型选择会被噪声误导。
+- BatchNorm 仍然用当前验证批次的统计量，而不是训练累积的 running stats；同一个样本在不同批次里的预测会不同。
+- 更隐蔽的是，BN 在训练模式下会更新 running stats，于是验证数据也被写进了模型的统计量里，形成一种轻微的数据泄漏。
+- 若验证循环还忘了 `with_no_grad()`，虽然不会反向传播，但仍会构建计算图，浪费内存和时间。
+
+正确写法：
+
+```r
+model$eval()
+with_no_grad({
+  coro::loop(for (batch in valid_dl) {
+    pred <- model(batch$x)
+    # 累加 loss / 指标
+  })
+})
+model$train()   # 下一个 epoch 记得切回训练模式
+```
+
+`with_no_grad()` 关闭自动微分记录，减少内存占用并加速前向；`model$eval()` 则控制层的行为（Dropout 关闭、BN 用 running stats）。两者解决的是不同问题，通常一起使用。使用 `luz` 时，`fit()` 会自动在训练和验证之间切换，不需要手写这两行。
+
+:::
+
+### 练习 6：用 `luz` 重写训练循环
+
+本练习用一个小的合成回归任务走通 `luz` 的标准流程。设 $x\in\mathbb R^3$，$y=1.5x_1-2x_2+0.5x_3+\varepsilon$，$\varepsilon\sim\mathcal N(0,0.3^2)$，共 400 个样本。
+
+（a） 用 `tensor_dataset()` 和 `dataloader()` 构建训练/验证加载器；定义一个含一个 16 维隐藏层和 Dropout 的 `nn_module`；用 `setup()`、`set_hparams()`、`set_opt_hparams()`、`fit()` 训练。提示：标签需要是 `[n, 1]` 而不是 `[n]`，否则 `nn_mse_loss()` 会和模型输出 `[B, 1]` 广播成 `[B, B]`。请解释这个坑。
+
+（b） 在 `setup()` 中加入 `metrics = list(luz_metric_rmse())`。比较 `get_metrics(fitted)` 与 `evaluate(fitted, valid_dl) |> get_metrics()` 的输出：前者包含哪些列？后者为什么只返回最终指标？`evaluate()` 内部做了什么模式切换？
+
+（c） 加入早停和模型检查点：验证损失连续若干轮不改善就停止；只在验证损失创新低时保存模型。解释 `monitor`、`mode`、`patience`、`min_delta`、`save_best_only` 的含义。为什么早停结束时的模型不一定是验证集上最好的那个？路径模板 `m_{epoch:02d}.pt` 与固定路径有什么区别？
+
+（d） 本章报告 `luz` 版本在 Ames 数据上的 RMSE 为 0.330，而第 4 章手写全批循环为 0.3687。模型结构、优化器和数据相同，差别在训练方式。请设计一个消融实验，分离“mini-batch”“shuffle”“训练轮数/更新次数”“早停”四个因素。评估时应该看验证集还是测试集？为什么不能只看一次运行就下结论？
+
+:::{.callout-note collapse="true"}
+# 练习 6 参考答案
+
+（a） 数据、模型与 `luz` 流程。
+
+```r
+suppressPackageStartupMessages({
+  library(torch)
+  library(luz)
+})
+
+set.seed(11)
+torch_manual_seed(11)
+
+n <- 400
+x <- torch_randn(n, 3)
+w <- torch_tensor(c(1.5, -2, 0.5))
+y <- torch_unsqueeze(
+  torch_matmul(x, w) + 0.3 * torch_randn(n), 2
+)                                      # [400, 1]
+
+i_tr <- 1:300
+i_va <- 301:400
+
+train_ds <- tensor_dataset(x[i_tr, ], y[i_tr])
+valid_ds <- tensor_dataset(x[i_va, ], y[i_va])
+
+train_dl <- dataloader(train_ds, batch_size = 32, shuffle = TRUE)
+valid_dl <- dataloader(valid_ds, batch_size = 32)
+
+TinyReg <- nn_module(
+  "TinyReg",
+  initialize = function() {
+    self$fc1 <- nn_linear(3, 16)
+    self$drop <- nn_dropout(0.1)
+    self$fc2 <- nn_linear(16, 1)
+  },
+  forward = function(x) {
+    x %>%
+      self$fc1() %>%
+      nnf_relu() %>%
+      self$drop() %>%
+      self$fc2()
+  }
+)
+
+fitted <- TinyReg %>%
+  setup(
+    loss = nn_mse_loss(),
+    optimizer = optim_adamw,
+    metrics = list(luz_metric_rmse())
+  ) %>%
+  set_hparams() %>%
+  set_opt_hparams(lr = 0.01, weight_decay = 0.01) %>%
+  fit(
+    train_dl,
+    epochs = 20,
+    valid_data = valid_dl,
+    verbose = FALSE
+  )
+```
+
+`tensor_dataset()` 是内存张量的一键封装，等价于手写一个持有 `self$x`、`self$y` 的 `dataset()`。`set_hparams()` 把参数传给 `initialize()`；本例的 `TinyReg` 没有超参数，所以空调用即可。`set_opt_hparams()` 则把 `lr`、`weight_decay` 传给优化器。
+
+标签必须是 `[n, 1]`。如果 `y` 是 `[n]`，模型输出是 `[B, 1]`，`nn_mse_loss()` 会把 `[B]` 和 `[B, 1]` 广播成 `[B, B]` 再逐元素求平方，损失会大得离谱；PyTorch/torch 通常会给出 “target size ... different to input size ...” 的警告。用 `torch_unsqueeze(y, 2)` 或 `y$view(c(-1, 1))` 把标签变成列向量即可。
+
+（b） 指标与 `evaluate()`。
+
+`get_metrics(fitted)` 返回一个 tibble，列为 `set`、`metric`、`epoch`、`value`；`set` 取 `train` 或 `valid`，因此可以画训练/验证曲线、比较每个 epoch 的 RMSE。`evaluate(fitted, valid_dl) |> get_metrics()` 只返回最后一次评估的 `set`、`metric`、`value`，没有 `epoch` 列，适合在训练结束后报告最终分数。
+
+`evaluate()` 会自动把模型切到 `eval()` 模式，并用 `with_no_grad()` 关闭梯度记录，然后按 `valid_dl` 的顺序前向。它不会更新参数，也不会更新 BN 的 running stats；这正是我们想要的“只评估、不学习”。如果模型里有 Dropout，`evaluate()` 会把它关掉；如果手动写评估循环，就必须自己调用 `model$eval()`，否则指标会带随机性。
+
+（c） 早停与检查点。
+
+```r
+callbacks = list(
+  luz_callback_early_stopping(
+    monitor = "valid_loss",
+    patience = 5,
+    min_delta = 1e-3,
+    mode = "min"
+  ),
+  luz_callback_model_checkpoint(
+    path = "checkpoints/tiny_{epoch:02d}.pt",
+    save_best_only = TRUE,
+    monitor = "valid_loss",
+    mode = "min"
+  )
+)
+
+fitted <- TinyReg %>%
+  setup(
+    loss = nn_mse_loss(),
+    optimizer = optim_adamw,
+    metrics = list(luz_metric_rmse())
+  ) %>%
+  set_hparams() %>%
+  set_opt_hparams(lr = 0.01, weight_decay = 0.01) %>%
+  fit(
+    train_dl,
+    epochs = 50,
+    valid_data = valid_dl,
+    verbose = FALSE,
+    callbacks = callbacks
+  )
+```
+
+参数含义：
+
+- `monitor = "valid_loss"`：看验证损失，而不是训练损失。训练损失通常一路下降，拿它做早停几乎不会触发，或者触发得太晚。
+- `mode = "min"`：损失越小越好；如果是准确率，则用 `mode = "max"`。
+- `patience = 5`：允许连续 5 轮“没有显著改善”再停止，避免被一次波动误伤。
+- `min_delta = 1e-3`：改善幅度小于这个阈值就算“没改善”；设 0 则表示任何微小下降都算。
+- `save_best_only = TRUE`：只在验证损失创新低时写文件。路径里有 `{epoch:02d}` 时，每次创新低都会留下一个带轮次的文件，历史最佳不会被覆盖；如果希望磁盘上始终只有一份“当前最佳”，用固定路径（如 `"checkpoints/tiny_best.pt"`），后一次最佳会覆盖前一次。
+
+早停结束时，模型已经又训练了 `patience` 轮，权重可能比“最佳那一轮”更差；检查点保存的才是验证损失最低的那份。两者配合：早停负责省时间，检查点负责留下最好的模型。注意 `save_best_only` 不会删除更早的最佳文件；用模板路径时目录里可能积累多个历史最佳。
+
+（d） 消融实验设计。
+
+先固定数据划分、模型结构、优化器、学习率和权重衰减，只改变训练方式。第 4 章的手写循环是 full batch（一次喂完 2344 个训练样本）、不 shuffle、跑 1000 个 epoch；`luz` 是 mini-batch 128、shuffle、跑 50 个 epoch。一个重要的事实是：两者更新次数其实接近——手写循环 1000 次全批更新；`luz` 每轮约 $\lceil 2344/128\rceil=19$ 个批次，50 轮约 950 次小批更新。所以不能简单说“`luz` 训练得更久”。
+
+建议的消融矩阵（固定总更新次数约 1000 次，先不加早停）：
+
+| 实验 | 批次 | shuffle | 更新次数 | 目的 |
+| :--- | :--- | :--- | :--- | :--- |
+| A | full batch | 否 | 1000 | 复现手写循环 |
+| B | 128 | 否 | 约 1000 | 分离 mini-batch |
+| C | 128 | 是 | 约 1000 | 分离 shuffle |
+| D | 128 | 是 | 约 1000 + 早停 | 分离早停的隐式正则 |
+
+在验证集上比较最佳 RMSE（不是测试集）；每个配置跑多个随机种子，报告均值和标准差。测试集只在最后选完方案后看一次。预期是：mini-batch 的梯度噪声和 shuffle 有助于跳出尖锐极小值，早停相当于限制有效训练轮数；但具体提升多少取决于数据，不能把一次运行的 0.330 与 0.3687 当作因果结论。
+
+还要注意两个混杂因素：
+
+1. 第 4 章的手写循环没有实时监控验证集，1000 轮本身就是一个“拍脑袋”的选择；而 `luz` 用验证集早停，二者在“模型选择”上并不对等。
+2. 本章的 0.330 是把测试集同时当作验证集使用；严格实验应再从训练集切出验证集，保持测试集完全隔离。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：LR Finder、网格/随机搜索与贝叶斯优化
+
+（a） 描述 LR Finder 的工作流程：为什么从很小的学习率开始、按 batch 指数级增大、在损失剧烈上升时停止？图中平滑后的损失曲线应该怎么读？为什么不能直接取“Loss 最低点”作为学习率？本章最终为什么选 0.003？
+
+（b） 网格搜索与随机搜索在相同预算下有什么区别？若有 4 个超参数、每个取 5 个候选值，网格需要多少次训练？随机搜索为什么可能更有效？在什么情况下网格反而更合适？
+
+（c） 解释“粗随机搜索 → 决策树 → 细网格”的流程。本章的决策树给出了哪些分裂？如何解读“Units ≥ 96”“Decay ≥ 2e-5”“Units ≥ 384”这些节点？这种做法有哪些风险？
+
+（d） 贝叶斯优化（MBO）中的代理模型和采集函数分别做什么？为什么出现 `p_int` 时可能从高斯过程切换到随机森林？本章 MBO 的结果是什么？在什么情况下不值得上 MBO？
+
+:::{.callout-note collapse="true"}
+# 练习 7 参考答案
+
+（a） LR Finder。
+
+流程是：从一个极小的学习率（如 $10^{-7}$）开始，每处理一个 batch 就把学习率乘以一个固定倍数（指数增长），记录该步的学习率和损失；当损失不再下降、开始剧烈上升时停止。这样一次扫描就能覆盖从“完全不动”到“发散”的整个区间。
+
+读图时看的是平滑后的曲线（通常是损失的指数加权移动平均），不是每一步的原始噪声。曲线可以分三段：
+
+1. 左侧平台：学习率太小，损失在某个高位震荡，模型几乎没学到东西。
+2. 中间下坡：梯度更新开始有效，损失快速下降；最陡的下降段代表“性价比”最高的区域。
+3. 右侧抬头/爆裂：学习率过大，更新在极小值附近震荡甚至发散。
+
+不能直接取最低点，因为最低点往往已经贴近不稳定边界；而且最低点可能只是某个 batch 的偶然结果。实践法则是：取平滑曲线最陡下降段的中点，或者取最低点除以 10，留出安全边际。本章图中最低点大约在 $0.02$–$0.03$，除以 10 得到 $0.002$–$0.003$，所以选 $0.003$。另外，LR Finder 的权重是探测过程中得到的，选定学习率后应从随机初始化重新训练，而不是接着探测的权重继续跑。
+
+（b） 网格 vs 随机。
+
+4 个参数、每个 5 个候选值，网格需要 $5^4=625$ 次完整训练；随机搜索只跑 $N$ 次（本章用 24 次），每次从每个参数的分布中独立采样。高维空间里通常只有 1–2 个超参数真正重要；网格会把大量预算花在“重要参数固定、无关参数变化”的重复组合上，而随机搜索通常能覆盖更多不同取值（连续参数几乎每次不同，离散参数仍可能重复），从而更充分地探索重要维度。
+
+本章的玩具例子把这一点极端化：真实分数只依赖 $x$，最佳点在 $x=0.7$，$y$ 完全无关。10×10 网格只有 10 个不同的 $x$，另外 10 个 $y$ 值是重复的；最佳网格点只能落在 $0.667$ 或 $0.778$，距离 0.7 至少约 $0.033$。随机 100 个点有 100 个不同的 $x$，通常会更接近 0.7（本章正文约为 $0.72$；当前环境重跑约 $0.725$）。固定种子做 1000 次重复，网格最佳点的平均绝对误差约 $0.052$，随机约 $0.039$，随机在约 66% 的重复中更接近真值——不是 100%，因为观测有噪声，偶尔会把较远的点误判为更好。
+
+网格并非一无是处：参数维度很低、候选值是少量离散值、需要完全可复现或易于并行时，网格更简单可靠；随机搜索可能漏掉狭窄的最优区域，这时可以用分层采样或拉丁超立方改进覆盖。
+
+（c） 粗随机 → 决策树 → 细网格。
+
+先用随机搜索在较大范围内试 20–30 组，记录每组超参数和验证 RMSE；再用决策树（如 `rpart`）拟合 `val_rmse ~ units + drop + lr + decay`，把“哪些参数、在什么阈值上最影响误差”可视化。本章的树大致给出：
+
+- 第一刀 `Units >= 96`：隐藏层单元太少（如 64）时，验证 RMSE 约 0.36，模型容量不足，属于欠拟合。
+- 第二刀 `Decay >= 2e-5`：在容量够的前提下，权重衰减太小，验证 RMSE 约 0.35，开始过拟合。
+- 最佳区域 `Units >= 384`：容量足够且有一定正则化时，验证 RMSE 约 0.32，这个区域约占全部试验的 21%。
+
+于是细网格把 `units` 固定在 256（树显示它不再敏感），`lr` 限制在 0.001–0.004，`drop` 限制在 0.1–0.3，`decay` 固定为 1e-4，进一步搜索。树还显示 `lr` 没有成为主要分裂点，这不是因为学习率不重要，而是因为前面的 LR Finder 已经把范围收窄到 0.001–0.006，属于“范围限制”造成的假象。
+
+风险主要有：
+
+- 24 次试验太少，树的分裂和“21% 最佳区域”可能只是小样本噪声；换一个种子，树可能长得不一样。
+- 反复用同一个验证集挑参数，会让验证集逐渐“被拟合”，报告的最好分数偏乐观；严格做法是嵌套交叉验证或留出最终测试集。
+- 搜索阶段的早停、训练轮数本身也是超参数，固定它们会与其它参数产生交互；不同试验的早停轮数不同，比较并不完全公平。
+- 决策树是相关性和阈值的描述，不是因果结论；“`units >= 384` 更好”不代表所有数据上都应无限加宽。
+
+（d） 贝叶斯优化。
+
+MBO 用已有试验拟合一个代理模型，估计“超参数 → 验证损失”的地形；再用采集函数（如 Expected Improvement）决定下一个试点：是在当前预测最好的点附近继续挖（exploitation），还是去不确定性大的区域探索（exploration）。每跑完一次试验，就把新点加入数据、更新代理模型，循环若干次。
+
+高斯过程适合连续、平滑的低维空间；当搜索空间含整数 `p_int`（如神经元个数）或类别 `p_fct` 时，GP 的核函数和离散距离不好定义，`mlr3mbo` 会自动改用随机森林（`ranger`）作为代理模型。随后用 `rgenoud` 在代理模型上优化采集函数，找出下一个候选点。
+
+本章 30 次评估后得到：`units = 418`、`drop = 0.2531`、`lr = 0.0025`、`decay` 显示为 `0.0000`，最小验证损失约 0.3156。这里 `decay` 的显示值需要小心：搜索空间是 $10^{\text{log\_decay}}$、`log_decay` 在 $[-5,-3]$ 之间，所以真实 `decay` 最小是 $10^{-5}$；打印成四位小数就成了 `0.0000`，并不是真的没有正则化。
+
+MBO 适合“单次训练很贵、参数维度中等、 trial 数量很少”的场景；如果单次训练几秒钟、参数只有两三个、候选集很小，随机搜索加决策树已经足够，MBO 的代理模型和采集函数优化反而增加复杂度和复现难度。MBO 也需要随机初始设计点，不能完全替代随机搜索。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：四个工程 bug
+
+下面的代码都来自真实的“看起来没问题”的写法。请指出每个片段的症状、根本原因和修法。
+
+（a） 标准化与数据泄漏
+
+```r
+x_all <- scale(rbind(x_train, x_test))
+
+x_train <- x_all[1:nrow(x_train), ]
+x_test  <- x_all[(nrow(x_train) + 1):nrow(x_all), ]
+```
+
+（b） 惰性 Dataset 的路径
+
+```r
+CSVFolderDataset <- dataset(
+  name = "CSVDataset",
+  initialize = function(path) {
+    self$files <- list.files(path, full.names = TRUE, pattern = "\\.csv$")
+  },
+  .getitem = function(index) {
+    raw_data <- read.csv(path)
+    x <- torch_tensor(as.numeric(raw_data[1, 1:2]), dtype = torch_float())
+    y <- torch_tensor(as.numeric(raw_data[1, 3]), dtype = torch_float())
+    list(x = x, y = y)
+  },
+  .length = function() length(self$files)
+)
+```
+
+（c） 验证循环忘了切换模式
+
+```r
+for (epoch in 1:epochs) {
+  model$train()
+
+  coro::loop(for (batch in train_dl) {
+    loss <- loss_fn(model(batch$x), batch$y)
+    optimizer$zero_grad()
+    loss$backward()
+    optimizer$step()
+  })
+
+  # 验证
+  val_loss <- 0
+  coro::loop(for (batch in valid_dl) {
+    pred <- model(batch$x)
+    val_loss <- val_loss + as.numeric(loss_fn(pred, batch$y))
+  })
+  cat("epoch", epoch, "valid loss", val_loss, "\n")
+}
+```
+
+（d） 回调的监控目标
+
+```r
+lr_scheduler_cb <- luz_callback_lr_scheduler(
+  lr_reduce_on_plateau,
+  monitor = "valid_loss",
+  patience = 3,
+  factor = 0.5,
+  mode = "min"
+)
+
+early_stop_cb <- luz_callback_early_stopping(
+  monitor = "train_loss",
+  patience = 5,
+  mode = "min"
+)
+```
+
+:::{.callout-note collapse="true"}
+# 练习 8 参考答案
+
+（a） 标准化泄漏。
+
+`scale(rbind(x_train, x_test))` 用训练集和测试集合并后的均值/标准差去中心化。测试集的分布信息因此进入了训练前的预处理，训练时模型已经“偷看”了测试集的均值和尺度。症状是测试误差偏乐观，数据量越小、训练/测试分布差异越大，偏乐观越明显；如果测试集不是随机划分而是按时间/地区划分，问题会更严重。
+
+正确做法是只在训练集上估计预处理参数，再应用到验证/测试集：
+
+```r
+train_means <- colMeans(x_train)
+train_sds <- apply(x_train, 2, sd)
+
+x_train_scaled <- scale(x_train, center = train_means, scale = train_sds)
+x_test_scaled  <- scale(x_test,  center = train_means, scale = train_sds)
+```
+
+注意处理方差为 0 的列（`scale` 会产生 `NaN`），并在划分之前完成去重/缺失值处理。目标变量如果做了对数或标准化，也要用训练集的统计量变换，预测时再用同一组统计量反变换。更根本的原则是：先切分，再预处理；测试集在最终评估前不参与任何拟合，包括均值、方差、编码器和特征选择。早停、超参数选择也应该用验证集，而不是测试集。
+
+（b） 路径作用域 bug。
+
+`.getitem` 里写的是 `read.csv(path)`，但 `path` 只是 `initialize` 函数的局部参数，并不是 `self` 的字段。R6 方法的自由变量会在 `dataset()` 被调用的环境里查找，而不是在 `initialize` 的调用帧里查找；如果全局环境没有 `path`，就会报错：
+
+```text
+Error in read.csv(path) : object 'path' not found
+# 中文环境：找不到对象'path'
+```
+
+更危险的情况是：如果全局环境恰好有一个叫 `path` 的变量，代码不会报错，但会静默地读取错误的文件，每个样本都可能来自同一个 CSV，训练集看起来“能跑”，实际完全错了。
+
+修法是把当前索引对应的路径先取出来：
+
+```r
+.getitem = function(index) {
+  file_path <- self$files[index]
+  raw_data <- read.csv(file_path)
+  # ...
+}
+```
+
+这个 bug 也说明惰性加载的调试要点：先单独调用 `ds[1]`、`ds[2]`，检查返回的 `x` 是否确实不同；再遍历几个 batch，确认没有“所有样本一样”的情况。
+
+（c） 验证模式与梯度记录。
+
+症状：验证损失每个 epoch 抖动，同一份验证集重复评估结果不一样；验证损失可能异常好或异常差；训练结束后 BN 的 running stats 与训练分布不完全一致。原因有三层：
+
+1. `model` 仍处于 `train()` 模式，Dropout 在验证时继续随机丢弃神经元，预测带随机性。
+2. BN 在训练模式下使用当前验证批次的均值/方差，而不是训练累积的 running stats；同一个样本在不同 batch 里预测不同，且验证数据会更新 running stats，造成统计量泄漏。
+3. 没有 `with_no_grad()`，验证前向仍然构建计算图，浪费内存和时间（虽然不会反向传播）。
+
+修法：
+
+```r
+model$eval()
+with_no_grad({
+  total_loss <- 0
+  total_n <- 0
+  coro::loop(for (batch in valid_dl) {
+    pred <- model(batch$x)
+    b <- batch$x$size(1)
+    total_loss <- total_loss + as.numeric(loss_fn(pred, batch$y)) * b
+    total_n <- total_n + b
+  })
+  val_loss <- total_loss / total_n
+})
+model$train()
+```
+
+这里按批次样本数加权，而不是把每个 batch 的平均损失简单相加再除以批次数；最后一个 batch 可能更小，简单平均会低估/高估它。`model$train()` 要放在验证之后，供下一个 epoch 使用；如果忘了切回训练模式，下一轮训练会关闭 Dropout、BN 也不再更新 running stats，等于悄悄换了一个模型。
+
+（d） 回调的监控目标与 API 版本。
+
+这段代码有两个独立的问题。
+
+第一，早停监控了 `train_loss`。训练损失通常单调下降（即使模型在过拟合），所以 `patience` 很难触发，早停要么不生效，要么在训练损失终于停滞时才停，此时验证集早已变差。模型检查点如果也监控 `train_loss`，保存下来的会是“训练损失最低”的模型，而不是验证集最好的模型。应改成：
+
+```r
+monitor = "valid_loss", mode = "min"
+```
+
+第二，当前 luz 0.5.2 的 `luz_callback_lr_scheduler()` 不接受 `monitor` 参数。它的签名是
+
+```r
+luz_callback_lr_scheduler(lr_scheduler, ..., call_on = "on_epoch_end", opt_name = NULL)
+```
+
+`...` 会被原样转发给调度器生成器 `lr_reduce_on_plateau()`，而它的参数是 `optimizer, mode, factor, patience, threshold, ...`，没有 `monitor`。所以本章示例里的 `monitor = "valid_loss"` 会直接报错：
+
+```text
+Error: 参数没有用(monitor = "valid_loss")
+# 英文环境：unused argument (monitor = "valid_loss")
+```
+
+即使去掉 `monitor`，这个回调也不是按验证损失降学习率：它的 `on_epoch_end()` 会把 `ctx$loss`（当前优化器的训练损失）传给 `lr_reduce_on_plateau$step(metrics)`。如果确实要按验证损失调度，需要自定义回调，从训练上下文中取出验证损失并调用调度器（具体字段名以所用 luz 版本为准）；或者接受“按训练损失降 lr”的近似做法，并清楚它的语义。书稿写作时的 luz 版本可能支持 `monitor`，在当前版本上运行时遇到这个错误，属于 API 版本差异，不是你的代码逻辑错。
+
+最后提醒一个相关陷阱：早停和检查点的 `monitor` 必须与 `luz` 记录的指标名完全一致（`valid_loss` 而不是 `validation_loss`、`val_loss`），`mode` 也要与指标方向一致（损失用 `min`，准确率用 `max`）。名字写错通常不会静默失败，而是报“metric not found”；但如果写成了 `train_loss`，就会静默地监控错误的对象，这是更危险的情况。
+
+:::

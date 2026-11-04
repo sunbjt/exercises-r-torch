@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-Hans" xml:lang="zh-Hans"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>11 图神经网络 – 深度学习与生成式 AI：课后练习</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./12-vae-exercises.html" rel="next">
+<link href="./10-recsys-exercises.html" rel="prev">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-c10c624cab4f32a71991352778f012ac.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "textbox",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "没有结果",
+    "search-matching-documents-text": "匹配的文档",
+    "search-copy-link-title": "复制搜索链接",
+    "search-hide-matches-text": "隐藏其它匹配结果",
+    "search-more-match-text": "更多匹配结果",
+    "search-more-matches-text": "更多匹配结果",
+    "search-clear-button-title": "清除",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "取消",
+    "search-submit-button-title": "提交",
+    "search-label": "搜索"
+  }
+}</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="theme.css">
+</head>
+
+<body class="nav-sidebar floating quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="./11-gnn-exercises.html">11 图神经网络</a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="搜索" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="./">深度学习与生成式 AI：课后练习</a> 
+        <div class="sidebar-tools-main">
+  <a href="" class="quarto-reader-toggle quarto-navigation-tool px-1" onclick="window.quartoToggleReader(); return false;" title="切换阅读器模式">
+  <div class="quarto-reader-toggle-btn">
+  <i class="bi"></i>
+  </div>
+</a>
+</div>
+    </div>
+      </div>
+        <div class="mt-2 flex-shrink-0 align-items-center">
+        <div class="sidebar-search">
+        <div id="quarto-search" class="" title="搜索"></div>
+        </div>
+        </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">使用说明</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./03-math-ml-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">03 自动微分</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./04-backforward-nn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">04 多层感知机</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./05-optimizer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">05 优化与训练动力学</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./06-regularization-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">06 工程化实验</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./07-convolution-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">07 卷积网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./08-rnn-lstm-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">08 循环网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./09-transformer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">09 Transformer</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./10-recsys-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">10 深度推荐模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./11-gnn-exercises.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">11 图神经网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./12-vae-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">12 变分自编码器</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./13-GAN-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">13 生成对抗网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./14-diffusion-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">14 扩散模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./15-explainable-ai-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">15 解释性与诊断</span></a>
+  </div>
+</li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">本页目录</h2>
+   
+  <ul>
+  <li><a href="#一概念与推导" id="toc-一概念与推导" class="nav-link active" data-scroll-target="#一概念与推导">一、概念与推导</a>
+  <ul class="collapse">
+  <li><a href="#练习-1gcn-的归一化参数量与过平滑" id="toc-练习-1gcn-的归一化参数量与过平滑" class="nav-link" data-scroll-target="#练习-1gcn-的归一化参数量与过平滑">练习 1：GCN 的归一化、参数量与过平滑</a></li>
+  <li><a href="#练习-2gat-的加性注意力与掩码" id="toc-练习-2gat-的加性注意力与掩码" class="nav-link" data-scroll-target="#练习-2gat-的加性注意力与掩码">练习 2：GAT 的加性注意力与掩码</a></li>
+  <li><a href="#练习-3lightgcn-的传播层平均与-bpr" id="toc-练习-3lightgcn-的传播层平均与-bpr" class="nav-link" data-scroll-target="#练习-3lightgcn-的传播层平均与-bpr">练习 3：LightGCN 的传播、层平均与 BPR</a></li>
+  </ul></li>
+  <li><a href="#二编程实践" id="toc-二编程实践" class="nav-link" data-scroll-target="#二编程实践">二、编程实践</a>
+  <ul class="collapse">
+  <li><a href="#练习-4手写-gcn-归一化与两层前向" id="toc-练习-4手写-gcn-归一化与两层前向" class="nav-link" data-scroll-target="#练习-4手写-gcn-归一化与两层前向">练习 4：手写 GCN 归一化与两层前向</a></li>
+  <li><a href="#练习-5手写-gat-得分矩阵与掩码-softmax" id="toc-练习-5手写-gat-得分矩阵与掩码-softmax" class="nav-link" data-scroll-target="#练习-5手写-gat-得分矩阵与掩码-softmax">练习 5：手写 GAT 得分矩阵与掩码 Softmax</a></li>
+  <li><a href="#练习-6分子图的掩码双池化读出" id="toc-练习-6分子图的掩码双池化读出" class="nav-link" data-scroll-target="#练习-6分子图的掩码双池化读出">练习 6：分子图的掩码双池化读出</a></li>
+  </ul></li>
+  <li><a href="#三开放思考" id="toc-三开放思考" class="nav-link" data-scroll-target="#三开放思考">三、开放思考</a>
+  <ul class="collapse">
+  <li><a href="#练习-7gcngatlightgcn-的适用边界" id="toc-练习-7gcngatlightgcn-的适用边界" class="nav-link" data-scroll-target="#练习-7gcngatlightgcn-的适用边界">练习 7：GCN、GAT、LightGCN 的适用边界</a></li>
+  </ul></li>
+  <li><a href="#四纠错与陷阱" id="toc-四纠错与陷阱" class="nav-link" data-scroll-target="#四纠错与陷阱">四、纠错与陷阱</a>
+  <ul class="collapse">
+  <li><a href="#练习-8七个容易复现的坑" id="toc-练习-8七个容易复现的坑" class="nav-link" data-scroll-target="#练习-8七个容易复现的坑">练习 8：七个容易复现的坑</a></li>
+  </ul></li>
+  <li><a href="#进一步练习可选" id="toc-进一步练习可选" class="nav-link" data-scroll-target="#进一步练习可选">进一步练习（可选）</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">11 图神经网络</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>本章从图的邻接矩阵出发，依次讨论 GCN、GAT、LightGCN 和分子图回归。下面 8 道题按四类编排：</p>
+<ul>
+<li>概念与推导（练习 1–3）：GCN 的对称归一化、参数量与过平滑；GAT 的加性注意力、掩码与多头；LightGCN 的传播、层平均与 BPR。</li>
+<li>编程实践（练习 4–6）：手写 GCN 归一化与两层前向；手写 GAT 得分矩阵与掩码 Softmax；实现分子图的掩码双池化读出。</li>
+<li>开放思考（练习 7）：GCN、GAT、LightGCN 的适用边界，过平滑、冷启动与异配性。</li>
+<li>纠错与陷阱（练习 8）：Zachary 的 0/1 注释、Cora 的 50/100 轮、LightGCN 的负采样与自环、GAT 的掩码方向、MSE 与 RMSE 的区别。</li>
+</ul>
+<p>建议用时约 3 小时。练习 1、2、4、5 可以先做；练习 3、6 适合对照本章代码阅读；练习 7、8 建议在复现实验前完成。答案中的 Cora 统计量在 R 4.6.1、torch 0.17.0 下核对过：2708 个节点、1433 维特征、7 个类别；原始 <code>cora.cites</code> 有 5429 条有向引用记录，按无向图合并后是 5278 条唯一边。</p>
+<section id="一概念与推导" class="level2">
+<h2 class="anchored" data-anchor-id="一概念与推导">一、概念与推导</h2>
+<section id="练习-1gcn-的归一化参数量与过平滑" class="level3">
+<h3 class="anchored" data-anchor-id="练习-1gcn-的归一化参数量与过平滑">练习 1：GCN 的归一化、参数量与过平滑</h3>
+<p>考虑一个无向图，4 个节点，边为 <span class="math inline">\((1,2)\)</span>、<span class="math inline">\((1,3)\)</span>、<span class="math inline">\((2,4)\)</span>。</p>
+<ul>
+<li>（a） 写出邻接矩阵 <span class="math inline">\(A\)</span>、度矩阵 <span class="math inline">\(D\)</span>、加自环后的 <span class="math inline">\(\tilde A=A+I\)</span> 和 <span class="math inline">\(\tilde D\)</span>。</li>
+<li>（b） 计算对称归一化矩阵 <span class="math display">\[
+\hat A=\tilde D^{-1/2}\tilde A\tilde D^{-1/2}.
+\]</span> 验证 <span class="math inline">\(\hat A\)</span> 的每一行之和是否等于 1；再与 <span class="math inline">\(\tilde D^{-1}\tilde A\)</span> 比较。解释为什么对称归一化会“稀释”高度节点的信息，而低度节点反而获得更大的权重。</li>
+<li>（c） 本章 Cora 的 GCN 是 <span class="math inline">\(1433\to16\to7\)</span>，两层都使用 <code>nn_linear(..., bias = FALSE)</code>。计算参数量；如果把两层偏置都加回来，参数量是多少？</li>
+<li>（d） 去掉两层之间的 ReLU，会发生什么？用矩阵结合律说明“深度”为什么没有带来新的函数类。</li>
+<li>（e） Zachary 的 GCN 是 <span class="math inline">\(34\to4\to2\)</span>，两层都使用带偏置的 <code>nn_linear</code>。计算参数量；为什么只用节点 1 和节点 34 的标签也能训练？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-1-contents" aria-controls="callout-1" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 1 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-1" class="callout-1-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）矩阵。</p>
+<p><span class="math display">\[
+A=\begin{pmatrix}
+0&amp;1&amp;1&amp;0\\
+1&amp;0&amp;0&amp;1\\
+1&amp;0&amp;0&amp;0\\
+0&amp;1&amp;0&amp;0
+\end{pmatrix},
+\qquad
+D=\operatorname{diag}(2,2,1,1).
+\]</span></p>
+<p>加自环：</p>
+<p><span class="math display">\[
+\tilde A=A+I=
+\begin{pmatrix}
+1&amp;1&amp;1&amp;0\\
+1&amp;1&amp;0&amp;1\\
+1&amp;0&amp;1&amp;0\\
+0&amp;1&amp;0&amp;1
+\end{pmatrix},
+\qquad
+\tilde D=\operatorname{diag}(3,3,2,2).
+\]</span></p>
+<p>（b）对称归一化。</p>
+<p><span class="math display">\[
+\hat A=
+\begin{pmatrix}
+\frac13&amp;\frac13&amp;\frac1{\sqrt6}&amp;0\\
+\frac13&amp;\frac13&amp;0&amp;\frac1{\sqrt6}\\
+\frac1{\sqrt6}&amp;0&amp;\frac12&amp;0\\
+0&amp;\frac1{\sqrt6}&amp;0&amp;\frac12
+\end{pmatrix}.
+\]</span></p>
+<p>其中 <span class="math inline">\(1/\sqrt6\approx0.408248\)</span>。各行之和为</p>
+<p><span class="math display">\[
+\begin{aligned}
+\text{row }1,2 &amp;: \frac13+\frac13+\frac1{\sqrt6}
+=1.074915,\\
+\text{row }3,4 &amp;: \frac1{\sqrt6}+\frac12
+=0.908248.
+\end{aligned}
+\]</span></p>
+<p>所以 <span class="math inline">\(\hat A\)</span> 不是行随机矩阵，行和不一定为 1。它是对称矩阵，谱半径不超过 1；对称归一化同时考虑了发送方和接收方的度数：</p>
+<p><span class="math display">\[
+\hat A_{ij}=\frac{1}{\sqrt{\tilde d_i}\sqrt{\tilde d_j}}.
+\]</span></p>
+<p>节点 1 的两个邻居是节点 2（<span class="math inline">\(\tilde d=3\)</span>）和节点 3（<span class="math inline">\(\tilde d=2\)</span>）。对称归一化给节点 2 的权重是 <span class="math inline">\(1/3\approx0.333\)</span>，给节点 3 的权重是 <span class="math inline">\(1/\sqrt6\approx0.408\)</span>：度数更低的节点 3 反而更重要。若改用 <span class="math inline">\(\tilde D^{-1}\tilde A\)</span>，节点 1 对两个邻居都分配 <span class="math inline">\(1/3\)</span>，只看接收方，不区分邻居自身的“注意力是否被分散”。</p>
+<p>（c）Cora GCN 参数量。</p>
+<p>第一层 <span class="math inline">\(1433\times16=22{,}928\)</span>，第二层 <span class="math inline">\(16\times7=112\)</span>，合计</p>
+<p><span class="math display">\[
+22{,}928+112=\boxed{23{,}040}.
+\]</span></p>
+<p>加回偏置后多出 <span class="math inline">\(16+7=23\)</span> 个参数，合计 23,063。</p>
+<p>（d）去掉 ReLU。</p>
+<p>设第一层权重为 <span class="math inline">\(W_1\)</span>，第二层为 <span class="math inline">\(W_2\)</span>，则</p>
+<p><span class="math display">\[
+H^{(2)}
+=\hat A\bigl(\hat A XW_1\bigr)W_2
+=\hat A^2X(W_1W_2).
+\]</span></p>
+<p>令 <span class="math inline">\(W'=W_1W_2\)</span>，它仍然是一个 <span class="math inline">\(1433\times7\)</span> 的线性映射。也就是说，两层线性 GCN 在函数类上等价于“一层线性 GCN + 两次邻接传播”；邻接矩阵仍然扩大了感受野，但没有非线性带来的新折点，深度本身不会增加模型能表达的函数类。这也是本章反复强调“特征变换之后必须有非线性”的原因。</p>
+<p>（e）Zachary GCN 参数量。</p>
+<p>第一层 <span class="math inline">\(34\times4+4=140\)</span>，第二层 <span class="math inline">\(4\times2+2=10\)</span>，合计</p>
+<p><span class="math display">\[
+140+10=\boxed{150}.
+\]</span></p>
+<p>训练时只取 <code>target_idx &lt;- c(1, 34)</code> 计算交叉熵，但前向传播中每个节点的表示都经过 <span class="math inline">\(\hat A\)</span> 与邻居混合。节点 1 和节点 34 的梯度会沿着图结构传到它们的邻居、邻居的邻居，因此其余 32 个节点虽然没有直接标签，仍然会收到梯度并更新表示。这就是半监督节点分类的基本机制。</p>
+<p>补充：过平滑。 如果不断堆叠 GCN 层，<span class="math inline">\(\hat A^L\)</span> 会把每个节点的感受野扩大到全图。对于带自环的连通图，反复平均会让不同节点的表示越来越接近，最后难以区分，这就是过平滑（over-smoothing）。Cora 上两层通常已经足够；层数增加不一定提高准确率，反而可能下降。常见缓解手段包括残差连接、JKNet、DropEdge、层平均（LightGCN 就采用了层平均）等。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-2gat-的加性注意力与掩码" class="level3">
+<h3 class="anchored" data-anchor-id="练习-2gat-的加性注意力与掩码">练习 2：GAT 的加性注意力与掩码</h3>
+<p>GAT 的理论得分是</p>
+<p><span class="math display">\[
+e_{ij}=\operatorname{LeakyReLU}\left(\vec a^\top[z_i\Vert z_j]\right).
+\]</span></p>
+<ul>
+<li>（a） 把 <span class="math inline">\(\vec a\)</span> 从中间劈成 <span class="math inline">\(\vec a_{src}\)</span> 和 <span class="math inline">\(\vec a_{dst}\)</span>，证明 <span class="math display">\[
+\vec a^\top[z_i\Vert z_j]=\vec a_{src}^\top z_i+\vec a_{dst}^\top z_j.
+\]</span> 写出用矩阵一次性计算所有 <span class="math inline">\(e_{ij}\)</span> 的表达式，并说明它比双重 <code>for</code> 循环省在哪里。</li>
+<li>（b） 取 3 个节点，<span class="math inline">\(z_1=(1,0)\)</span>、<span class="math inline">\(z_2=(0,1)\)</span>、<span class="math inline">\(z_3=(1,1)\)</span>，<span class="math inline">\(\vec a_{src}=(1,0)\)</span>、<span class="math inline">\(\vec a_{dst}=(0,1)\)</span>。图带自环，边为 <span class="math inline">\((1,1),(1,2),(2,1),(2,2),(2,3),(3,2),(3,3)\)</span>。计算得分矩阵 <span class="math inline">\(S\)</span>、掩码后的矩阵、Softmax 后的注意力 <span class="math inline">\(P\)</span>，以及 <span class="math inline">\(H=PZ\)</span>。验证 <span class="math inline">\(P\)</span> 的每一行之和。</li>
+<li>（c） 本章 Cora 的 GAT 有 8 个头，每个头 <span class="math inline">\(1433\to8\)</span>，输出层是单头 <span class="math inline">\(64\to7\)</span>。所有线性层都无偏置，但每个 GAT 层有两个长度为 8 的注意力向量。计算总参数量。</li>
+<li>（d） 代码用 <code>-1e9</code> 填充不存在的边。若某个节点没有任何邻居、也没有自环，整行都是 <code>-1e9</code>，Softmax 会得到什么？改用 <code>-Inf</code> 又会怎样？本章 Cora 为什么没有触发这个问题？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 2 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）拆分与向量化。</p>
+<p>把长为 <span class="math inline">\(2F_{out}\)</span> 的 <span class="math inline">\(\vec a\)</span> 分成前后两半：</p>
+<p><span class="math display">\[
+\vec a=\begin{pmatrix}\vec a_{src}\\ \vec a_{dst}\end{pmatrix},
+\qquad
+\vec a^\top[z_i\Vert z_j]
+=\vec a_{src}^\top z_i+\vec a_{dst}^\top z_j.
+\]</span></p>
+<p>令 <span class="math inline">\(Z\in\mathbb R^{N\times F_{out}}\)</span>，<span class="math inline">\(f_{src}=Z\vec a_{src}\in\mathbb R^{N\times1}\)</span>，<span class="math inline">\(f_{dst}=Z\vec a_{dst}\in\mathbb R^{N\times1}\)</span>，则</p>
+<p><span class="math display">\[
+S=f_{src}\mathbf 1^\top+\mathbf 1 f_{dst}^\top,
+\qquad
+S_{ij}=f_{src,i}+f_{dst,j}.
+\]</span></p>
+<p>这里 <span class="math inline">\(\mathbf 1\)</span> 是全 1 列向量。一次矩阵乘法加一次广播就得到 <span class="math inline">\(N\times N\)</span> 的得分矩阵；双重循环则要做 <span class="math inline">\(N^2\)</span> 次拼接和内积，在 Cora 的 <span class="math inline">\(N=2708\)</span> 上就是七百多万次小操作，主要成本在 R/Python 层的循环和内存分配，而不是浮点运算本身。</p>
+<p>（b）玩具图。</p>
+<p>按 <span class="math inline">\(S_{ij}=z_i^\top\vec a_{src}+z_j^\top\vec a_{dst}\)</span>：</p>
+<p><span class="math display">\[
+S=
+\begin{pmatrix}
+1&amp;2&amp;2\\
+0&amp;1&amp;1\\
+1&amp;2&amp;2
+\end{pmatrix}.
+\]</span></p>
+<p>邻接矩阵（含自环）为</p>
+<p><span class="math display">\[
+A=
+\begin{pmatrix}
+1&amp;1&amp;0\\
+1&amp;1&amp;1\\
+0&amp;1&amp;1
+\end{pmatrix}.
+\]</span></p>
+<p>掩码后：</p>
+<p><span class="math display">\[
+S_{\text{masked}}=
+\begin{pmatrix}
+1&amp;2&amp;-10^9\\
+0&amp;1&amp;1\\
+-10^9&amp;2&amp;2
+\end{pmatrix}.
+\]</span></p>
+<p>逐行 Softmax：</p>
+<p><span class="math display">\[
+P=
+\begin{pmatrix}
+0.2689&amp;0.7311&amp;0\\
+0.1554&amp;0.4223&amp;0.4223\\
+0&amp;0.5&amp;0.5
+\end{pmatrix},
+\qquad
+P\mathbf 1=\mathbf 1.
+\]</span></p>
+<p>最后</p>
+<p><span class="math display">\[
+H=PZ=
+\begin{pmatrix}
+0.2689&amp;0.7311\\
+0.5777&amp;0.8446\\
+0.5&amp;1.0
+\end{pmatrix}.
+\]</span></p>
+<p>（c）参数量。</p>
+<p>每个头：</p>
+<ul>
+<li>特征变换 <span class="math inline">\(W\)</span>：<span class="math inline">\(1433\times8=11{,}464\)</span>；</li>
+<li><span class="math inline">\(\vec a_{src}\)</span>：8；</li>
+<li><span class="math inline">\(\vec a_{dst}\)</span>：8。</li>
+</ul>
+<p>合计 <span class="math inline">\(11{,}480\)</span> 个参数。8 个头共 <span class="math inline">\(8\times11{,}480=91{,}840\)</span>。</p>
+<p>输出层：</p>
+<ul>
+<li><span class="math inline">\(W\)</span>：<span class="math inline">\(64\times7=448\)</span>；</li>
+<li><span class="math inline">\(\vec a_{src}\)</span>：7；</li>
+<li><span class="math inline">\(\vec a_{dst}\)</span>：7。</li>
+</ul>
+<p>合计 <span class="math inline">\(462\)</span>。总参数量：</p>
+<p><span class="math display">\[
+91{,}840+462=\boxed{92{,}302}.
+\]</span></p>
+<p>（d）整行被掩码。</p>
+<p>如果整行都是 <code>-1e9</code>，则</p>
+<p><span class="math display">\[
+\operatorname{softmax}([-10^9,-10^9,-10^9])
+=\left(\frac13,\frac13,\frac13\right),
+\]</span></p>
+<p>注意力会均匀分给所有节点，包括本来不存在的边。<code>-1e9</code> 的指数在 float32 下会下溢为 0，所以不会得到 NaN，但“全掩码”仍然是一个均匀分布。若改成 <code>-Inf</code>，整行都是 <span class="math inline">\(-\infty\)</span>，Softmax 的分母为 0，结果是 NaN。</p>
+<p>本章 Cora 的 <code>adj_binary &lt;- adj + diag(num_nodes)</code> 给每个节点都加了自环，因此每一行至少有一个合法位置，不会出现全掩码。对一般图，正确做法是：要么保证每个节点有自环，要么在 Softmax 后把“没有任何合法邻居”的行的输出显式置零，而不是依赖 <code>-1e9</code> 的数值巧合。</p>
+<p>命名与方向。 代码里 <code>scores &lt;- attn_src + attn_dst$t()</code> 的第 <span class="math inline">\(i\)</span> 行、第 <span class="math inline">\(j\)</span> 列是</p>
+<p><span class="math display">\[
+S_{ij}=z_i^\top\vec a_{src}+z_j^\top\vec a_{dst},
+\]</span></p>
+<p>而 <code>h_prime &lt;- attention %*% wh</code> 是第 <span class="math inline">\(i\)</span> 行聚合第 <span class="math inline">\(j\)</span> 列。因此第 <span class="math inline">\(i\)</span> 行是接收者，第 <span class="math inline">\(j\)</span> 列是发送者。本章正文后面也写了“行表示目标节点（接收），列表示源节点（发送）”，但前面把 <span class="math inline">\(\vec a_{src}\)</span> 解释成“节点 <span class="math inline">\(i\)</span> 作为发出者”，两处方向正好相反。模型仍然能训练，但读代码时要把名称或解释对调，不能同时按两种约定理解。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-3lightgcn-的传播层平均与-bpr" class="level3">
+<h3 class="anchored" data-anchor-id="练习-3lightgcn-的传播层平均与-bpr">练习 3：LightGCN 的传播、层平均与 BPR</h3>
+<p>LightGCN 在用户-物品二部图上做线性传播。设二部图邻接矩阵为 <span class="math inline">\(A\)</span>（不含自环），对称归一化为</p>
+<p><span class="math display">\[
+\hat A=D^{-1/2}AD^{-1/2},
+\qquad
+E^{(k+1)}=\hat A E^{(k)}.
+\]</span></p>
+<ul>
+<li>（a） 写出第 <span class="math inline">\(k\)</span> 层用户向量的展开式，并解释 LightGCN 为什么去掉特征变换 <span class="math inline">\(W\)</span> 和非线性 <span class="math inline">\(\sigma\)</span>。层平均 <span class="math display">\[
+e_u=\frac1{K+1}\sum_{k=0}^K e_u^{(k)}
+\]</span> 解决了什么问题？</li>
+<li>（b） 考虑 2 个用户、3 个物品，边为 <span class="math inline">\((u_1,i_1)\)</span>、<span class="math inline">\((u_1,i_2)\)</span>、<span class="math inline">\((u_2,i_2)\)</span>、<span class="math inline">\((u_2,i_3)\)</span>。初始标量表示为 <span class="math display">\[
+e^{(0)}=(e_{u_1},e_{u_2},e_{i_1},e_{i_2},e_{i_3})=(1,2,0.1,0.2,0.3).
+\]</span> 计算 <span class="math inline">\(\hat A\)</span>、两层传播 <span class="math inline">\(e^{(1)},e^{(2)}\)</span>，以及 <span class="math inline">\(K=2\)</span> 的层平均。对 <span class="math inline">\(u_1\)</span> 的正样本 <span class="math inline">\(i_1\)</span>、负样本 <span class="math inline">\(i_3\)</span>，分别计算第 0 层和层平均后的 BPR 损失。</li>
+<li>（c） 写出 BPR 损失 <span class="math display">\[
+\mathcal L_{\text{BPR}}=-\log\sigma(\hat y_{ui}-\hat y_{uj})
+\]</span> 对得分差 <span class="math inline">\(s=\hat y_{ui}-\hat y_{uj}\)</span> 的导数。为什么 L2 正则通常只加在第 0 层 embedding <span class="math inline">\(E^{(0)}\)</span> 上，而不是每一层传播后的表示上？</li>
+<li>（d） 一个新用户刚产生了几条交互，如何用 Folding-in 构造他的向量？如果新来的是一个物品，这套方法还能直接用吗？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 3 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）传播与设计动机。</p>
+<p>按节点顺序 <span class="math inline">\((u_1,u_2,i_1,i_2,i_3)\)</span>，二部图邻接矩阵为</p>
+<p><span class="math display">\[
+A=
+\begin{pmatrix}
+0&amp;0&amp;1&amp;1&amp;0\\
+0&amp;0&amp;0&amp;1&amp;1\\
+1&amp;0&amp;0&amp;0&amp;0\\
+1&amp;1&amp;0&amp;0&amp;0\\
+0&amp;1&amp;0&amp;0&amp;0
+\end{pmatrix}.
+\]</span></p>
+<p>度数为 <span class="math inline">\((2,2,1,2,1)\)</span>，因此</p>
+<p><span class="math display">\[
+\hat A=
+\begin{pmatrix}
+0&amp;0&amp;0.7071&amp;0.5&amp;0\\
+0&amp;0&amp;0&amp;0.5&amp;0.7071\\
+0.7071&amp;0&amp;0&amp;0&amp;0\\
+0.5&amp;0.5&amp;0&amp;0&amp;0\\
+0&amp;0.7071&amp;0&amp;0&amp;0
+\end{pmatrix}.
+\]</span></p>
+<p>第 <span class="math inline">\(k+1\)</span> 层用户向量是</p>
+<p><span class="math display">\[
+e_u^{(k+1)}
+=\sum_{i\in\mathcal N_u}
+\frac{1}{\sqrt{|D_u|}\sqrt{|D_i|}}e_i^{(k)},
+\]</span></p>
+<p>也就是“用户交互过的物品”的加权平均；物品侧完全对称。</p>
+<p>去掉 <span class="math inline">\(W\)</span> 和 <span class="math inline">\(\sigma\)</span> 的原因：协同过滤的输入通常只是用户/物品 ID 的 one-hot，初始 embedding 本身就是要学习的自由参数。再加一个共享线性变换 <span class="math inline">\(W\)</span>，在每一层对所有节点做同样的旋转，既没有内容特征可提取，又增加了参数和过拟合风险；非线性在 ID-only 的协同过滤中也贡献很小。LightGCN 保留的是最核心的邻居聚合。</p>
+<p>层平均的作用：第 0 层保留 ID 自身的原始特征，第 1 层引入直接交互，第 2 层引入“和我买过同样东西的人还买过什么”。如果只取最后一层，随着层数增加，初始 ID 信息会被反复平滑掉，出现过平滑；把各层取平均，相当于让模型自己组合不同半径的邻域信息。</p>
+<p>（b）玩具传播。</p>
+<p>第 1 层：</p>
+<p><span class="math display">\[
+e^{(1)}
+=(0.170711,\ 0.312132,\ 0.707107,\ 1.5,\ 1.414214).
+\]</span></p>
+<p>第 2 层：</p>
+<p><span class="math display">\[
+e^{(2)}
+=(1.25,\ 1.75,\ 0.120711,\ 0.241421,\ 0.220711).
+\]</span></p>
+<p><span class="math inline">\(K=2\)</span> 的层平均：</p>
+<p><span class="math display">\[
+\bar e=\frac{e^{(0)}+e^{(1)}+e^{(2)}}3
+=(0.806904,\ 1.354044,\ 0.309272,\ 0.64714,\ 0.644975).
+\]</span></p>
+<p>对 <span class="math inline">\(u_1\)</span>，正样本 <span class="math inline">\(i_1\)</span>、负样本 <span class="math inline">\(i_3\)</span>：</p>
+<ul>
+<li>第 0 层：<span class="math inline">\(s_0=1\times(0.1-0.3)=-0.2\)</span>， <span class="math display">\[
+\mathcal L_0=-\log\sigma(-0.2)=0.798139.
+\]</span></li>
+<li>层平均：<span class="math inline">\(s=0.806904\times(0.309272-0.644975)=-0.270879\)</span>， <span class="math display">\[
+\mathcal L=-\log\sigma(-0.270879)=0.837731.
+\]</span></li>
+</ul>
+<p>这个玩具例子说明：传播并不保证每一对 <span class="math inline">\((u,i,j)\)</span> 的 BPR 损失都下降；它只是把邻域信息混合进来，最终还要靠训练调整初始 embedding。不要用一个手工构造的传播结果判断模型好坏。</p>
+<p>（c）BPR 梯度与正则。</p>
+<p>令 <span class="math inline">\(s=\hat y_{ui}-\hat y_{uj}\)</span>，则</p>
+<p><span class="math display">\[
+\frac{\partial\mathcal L_{\text{BPR}}}{\partial s}
+=\frac{\partial}{\partial s}\left[-\log\sigma(s)\right]
+=-(1-\sigma(s))
+=\sigma(s)-1.
+\]</span></p>
+<p>当正样本得分远高于负样本时，<span class="math inline">\(\sigma(s)\to1\)</span>，梯度趋于 0；当负样本反超时，<span class="math inline">\(\sigma(s)\)</span> 很小，梯度接近 <span class="math inline">\(-1\)</span>，惩罚很大。若 <span class="math inline">\(\hat y_{ui}=e_u^\top e_i\)</span>，则</p>
+<p><span class="math display">\[
+\frac{\partial\mathcal L}{\partial e_u}
+=(\sigma(s)-1)(e_i-e_j),
+\]</span></p>
+<p>对 <span class="math inline">\(e_i\)</span>、<span class="math inline">\(e_j\)</span> 也有对称的表达式。负采样抽到正样本时，<span class="math inline">\(e_i=e_j\)</span>，这个梯度会变成 0，等于白算了一条样本。</p>
+<p>L2 通常只作用在 <span class="math inline">\(E^{(0)}\)</span>：传播后的 <span class="math inline">\(E^{(k)}\)</span> 是 <span class="math inline">\(E^{(0)}\)</span> 的线性组合，直接对每一层加正则会造成重复计权，而且会把“邻居聚合得到的表示”也强行压小。约束初始 embedding 的范数，等价于约束所有层的范数上界，更干净。</p>
+<p>（d）Folding-in。</p>
+<p>新用户 <span class="math inline">\(u\)</span> 有交互集合 <span class="math inline">\(\mathcal N_u\)</span>，可以忽略多层归一化，直接用物品向量的平均作为他的初始/实时向量：</p>
+<p><span class="math display">\[
+e_u^{\text{new}}
+\approx \frac{1}{|\mathcal N_u|}\sum_{i\in\mathcal N_u}e_i.
+\]</span></p>
+<p>这就是本章说的“用户即其行为的总和”。它不需要重新训练用户 embedding，适合新用户实时召回。</p>
+<p>新物品不能直接照搬：新物品没有任何用户交互，<span class="math inline">\(\mathcal N_i=\varnothing\)</span>，既没有邻居可聚合，也没有训练好的物品向量。此时需要内容特征（标题、类目、图像、文本 embedding）、双塔的物品塔、GraphSAGE 式的属性聚合，或者等积累到足够交互后重新训练。LightGCN 本身是转导式（transductive）的；Folding-in 只对“物品侧已经训练好、用户侧新来”的场景特别方便。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="二编程实践" class="level2">
+<h2 class="anchored" data-anchor-id="二编程实践">二、编程实践</h2>
+<section id="练习-4手写-gcn-归一化与两层前向" class="level3">
+<h3 class="anchored" data-anchor-id="练习-4手写-gcn-归一化与两层前向">练习 4：手写 GCN 归一化与两层前向</h3>
+<p>仍使用练习 1 的 4 节点图。令 <span class="math inline">\(X=I_4\)</span>，第一层权重只取前两列：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>W1 <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">0</span>,</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>               <span class="dv">0</span>, <span class="dv">1</span>,</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>               <span class="dv">0</span>, <span class="dv">0</span>,</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>               <span class="dv">0</span>, <span class="dv">0</span>), <span class="at">nrow =</span> <span class="dv">4</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>第二层 <span class="math inline">\(W_2=I_2\)</span>。请完成：</p>
+<ul>
+<li>（a） 写一个 <code>gcn_norm(A)</code>，输入 0/1 邻接矩阵，输出 <span class="math inline">\(\hat A=\tilde D^{-1/2}\tilde A\tilde D^{-1/2}\)</span>。</li>
+<li>（b） 写一个两层前向 <code>gcn_forward(X, A, W1, W2)</code>，第一层后接 ReLU，第二层不加激活。</li>
+<li>（c） 打印 <span class="math inline">\(\hat A\)</span>、<span class="math inline">\(H^{(1)}\)</span>、<span class="math inline">\(H^{(2)}\)</span>，并验证 <span class="math inline">\(H^{(2)}\)</span> 的每一行之和。</li>
+<li>（d） 如果把两层都改成带偏置的 <code>nn_linear</code>，这个玩具网络的参数量是多少？GCN 为什么常把偏置关掉？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 4 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）归一化函数。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(torch)</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>gcn_norm <span class="ot">&lt;-</span> <span class="cf">function</span>(A) {</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  n <span class="ot">&lt;-</span> A<span class="sc">$</span><span class="fu">size</span>(<span class="dv">1</span>)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  At <span class="ot">&lt;-</span> A <span class="sc">+</span> <span class="fu">torch_eye</span>(n, <span class="at">dtype =</span> A<span class="sc">$</span>dtype)</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> <span class="fu">torch_sum</span>(At, <span class="at">dim =</span> <span class="dv">2</span>)</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>  D_inv_sqrt <span class="ot">&lt;-</span> <span class="fu">torch_diag</span>(<span class="fu">torch_pow</span>(d, <span class="sc">-</span><span class="fl">0.5</span>))</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">torch_mm</span>(<span class="fu">torch_mm</span>(D_inv_sqrt, At), D_inv_sqrt)</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>注意 <code>torch_eye(n, dtype = A$dtype)</code> 的 dtype 要与 <code>A</code> 一致；如果 <code>A</code> 是 float32，而 <code>torch_eye()</code> 默认也是 float32，通常没问题，但显式写出 dtype 更稳。</p>
+<p>（b）两层前向。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>gcn_forward <span class="ot">&lt;-</span> <span class="cf">function</span>(X, A, W1, W2) {</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  A_hat <span class="ot">&lt;-</span> <span class="fu">gcn_norm</span>(A)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  H1 <span class="ot">&lt;-</span> <span class="fu">torch_relu</span>(<span class="fu">torch_mm</span>(A_hat, <span class="fu">torch_mm</span>(X, W1)))</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  H2 <span class="ot">&lt;-</span> <span class="fu">torch_mm</span>(A_hat, <span class="fu">torch_mm</span>(H1, W2))</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">A_hat =</span> A_hat, <span class="at">H1 =</span> H1, <span class="at">H2 =</span> H2)</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（c）运行结果。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>A <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">0</span>,</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">1</span>,</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>,</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>), <span class="at">nrow =</span> <span class="dv">4</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>X  <span class="ot">&lt;-</span> <span class="fu">torch_eye</span>(<span class="dv">4</span>)</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>W1 <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>, <span class="dv">0</span>,</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="dv">1</span>,</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="dv">0</span>,</span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>, <span class="dv">0</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>), <span class="at">nrow =</span> <span class="dv">4</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>W2 <span class="ot">&lt;-</span> <span class="fu">torch_eye</span>(<span class="dv">2</span>)</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>out <span class="ot">&lt;-</span> <span class="fu">gcn_forward</span>(X, A, W1, W2)</span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>out<span class="sc">$</span>A_hat</span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>out<span class="sc">$</span>H1</span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>out<span class="sc">$</span>H2</span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>out<span class="sc">$</span>H2<span class="sc">$</span><span class="fu">sum</span>(<span class="at">dim =</span> <span class="dv">2</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>输出（保留四位小数）：</p>
+<pre class="text"><code>A_hat
+ 0.3333  0.3333  0.4082  0.0000
+ 0.3333  0.3333  0.0000  0.4082
+ 0.4082  0.0000  0.5000  0.0000
+ 0.0000  0.4082  0.0000  0.5000
+
+H1
+ 0.3333  0.3333
+ 0.3333  0.3333
+ 0.4082  0.0000
+ 0.0000  0.4082
+
+H2
+ 0.3889  0.2222
+ 0.2222  0.3889
+ 0.3402  0.1361
+ 0.1361  0.3402
+
+row sums of H2
+ 0.6111
+ 0.6111
+ 0.4763
+ 0.4763</code></pre>
+<p><span class="math inline">\(H^{(2)}\)</span> 的行和不等于 1，这是正常的：<span class="math inline">\(\hat A\)</span> 不是行随机矩阵，GCN 也没有要求输出是概率分布。行和只是当前权重下各节点聚合结果的尺度，不是模型约束。</p>
+<p>（d）偏置与参数量。</p>
+<p>玩具网络：</p>
+<ul>
+<li>第一层 <span class="math inline">\(W_1\)</span>：<span class="math inline">\(4\times2=8\)</span>；</li>
+<li>第一层偏置：2；</li>
+<li>第二层 <span class="math inline">\(W_2\)</span>：<span class="math inline">\(2\times2=4\)</span>；</li>
+<li>第二层偏置：2。</li>
+</ul>
+<p>带偏置共 <span class="math inline">\(8+2+4+2=16\)</span> 个参数；不带偏置是 12 个。Cora 的 GCN 加回偏置只多 23 个参数（16+7），相对 23,040 很小。</p>
+<p>GCN 常写 <code>bias = FALSE</code>，主要是因为原始 GCN 公式和常见实现把偏置省掉，减少一点参数；偏置并不是数学上完全冗余：<span class="math inline">\(\hat A(XW+\mathbf b)\)</span> 中的 <span class="math inline">\(\mathbf b\)</span> 会被邻域平均，仍可能提供逐节点的平移。它是否显著影响结果要看数据和正则化，不能把“省略偏置”当成硬性正确性要求。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-5手写-gat-得分矩阵与掩码-softmax" class="level3">
+<h3 class="anchored" data-anchor-id="练习-5手写-gat-得分矩阵与掩码-softmax">练习 5：手写 GAT 得分矩阵与掩码 Softmax</h3>
+<p>使用练习 2 的 3 节点玩具图：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>Z <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">0</span>,</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>              <span class="dv">0</span>, <span class="dv">1</span>,</span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>              <span class="dv">1</span>, <span class="dv">1</span>), <span class="at">nrow =</span> <span class="dv">3</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>a_src <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">0</span>)</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>a_dst <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">1</span>)</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>A <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">0</span>,</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>              <span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">1</span>,</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>              <span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">1</span>), <span class="at">nrow =</span> <span class="dv">3</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<ul>
+<li>（a） 用 R torch 实现 <code>gat_attention(Z, a_src, a_dst, A)</code>，返回得分矩阵、掩码后的矩阵、注意力矩阵和输出 <span class="math inline">\(H\)</span>。</li>
+<li>（b） 打印 <span class="math inline">\(S\)</span>、<span class="math inline">\(P\)</span>、<span class="math inline">\(H\)</span>，并验证 <code>P$sum(dim = 2)</code>。</li>
+<li>（c） 如果把节点 1 的所有边（包括自环）都删掉，令 <code>A[1, ] &lt;- 0</code> 且 <code>A[, 1] &lt;- 0</code>，Softmax 会得到什么？如何修正？</li>
+<li>（d） 把 <code>-1e9</code> 换成 <code>-Inf</code>，在 R torch 中会发生什么？为什么本章的 Cora 代码没有暴露这个问题？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 5 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-5" class="callout-5-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）实现。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(torch)</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>gat_attention <span class="ot">&lt;-</span> <span class="cf">function</span>(Z, a_src, a_dst, A) {</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  Z <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(Z, <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  a_src <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(a_src, <span class="at">dtype =</span> <span class="fu">torch_float</span>())<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">2</span>)</span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a>  a_dst <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(a_dst, <span class="at">dtype =</span> <span class="fu">torch_float</span>())<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">2</span>)</span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a>  A <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(A, <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a>  scores <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(Z, a_src) <span class="sc">+</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">torch_matmul</span>(Z, a_dst)<span class="sc">$</span><span class="fu">t</span>()</span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a>  scores <span class="ot">&lt;-</span> <span class="fu">nnf_leaky_relu</span>(scores, <span class="at">negative_slope =</span> <span class="fl">0.2</span>)</span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>  masked <span class="ot">&lt;-</span> <span class="fu">torch_where</span>(</span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>    A <span class="sc">&gt;</span> <span class="dv">0</span>,</span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a>    scores,</span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a>    <span class="sc">-</span><span class="fl">1e9</span> <span class="sc">*</span> <span class="fu">torch_ones_like</span>(scores)</span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a>  attention <span class="ot">&lt;-</span> <span class="fu">nnf_softmax</span>(masked, <span class="at">dim =</span> <span class="dv">2</span>)</span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a>  output <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(attention, Z)</span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a>  <span class="fu">list</span>(<span class="at">scores =</span> scores, <span class="at">masked =</span> masked,</span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a>       <span class="at">attention =</span> attention, <span class="at">output =</span> output)</span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（b）输出。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>res <span class="ot">&lt;-</span> <span class="fu">gat_attention</span>(Z, a_src, a_dst, A)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>res<span class="sc">$</span>scores</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>res<span class="sc">$</span>attention</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>res<span class="sc">$</span>output</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>res<span class="sc">$</span>attention<span class="sc">$</span><span class="fu">sum</span>(<span class="at">dim =</span> <span class="dv">2</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<pre class="text"><code>scores
+ 1  2  2
+ 0  1  1
+ 1  2  2
+
+attention
+ 0.2689  0.7311  0.0000
+ 0.1554  0.4223  0.4223
+ 0.0000  0.5000  0.5000
+
+output
+ 0.2689  0.7311
+ 0.5777  0.8446
+ 0.5000  1.0000
+
+row sums
+ 1
+ 1
+ 1</code></pre>
+<p>（c）孤立节点。</p>
+<p>若节点 1 没有任何边、也没有自环，则 <span class="math inline">\(A\)</span> 的第 1 行全为 0。<code>torch_where</code> 把第 1 行所有得分都置为 <code>-1e9</code>，Softmax 得到</p>
+<p><span class="math display">\[
+\left(\frac13,\frac13,\frac13\right),
+\]</span></p>
+<p>注意力均匀分给所有节点，包括不存在的边。这不是“没有邻居”，而是把全图都当成了邻居。</p>
+<p>修正方式有两类：</p>
+<ol type="1">
+<li>给每个节点加自环，保证每行至少有一个合法位置；</li>
+<li>在 Softmax 之后计算 <code>valid &lt;- A$sum(dim = 2) &gt; 0</code>，对 <code>valid == FALSE</code> 的行把输出显式置零（或用一个可学习的空邻居向量）。</li>
+</ol>
+<p>本章 Cora 使用了第 1 种：<code>adj_binary &lt;- adj + diag(num_nodes)</code>，所以不会出现全零行。</p>
+<p>（d）<code>-Inf</code> 的行为。</p>
+<p>若整行都是 <code>-Inf</code>，Softmax 的分子是 <span class="math inline">\(e^{-\infty}=0\)</span>，分母也是 0，结果是 <code>NaN</code>。R torch 中会得到 <code>NaN</code>，后续反向传播会把 NaN 传播到参数。<code>-1e9</code> 避免了 NaN，但它只是“数值上足够负”，并不能表达“这一行没有任何合法邻居”的语义。生产代码应显式处理空邻居行，而不是依赖一个有限的极小值。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-6分子图的掩码双池化读出" class="level3">
+<h3 class="anchored" data-anchor-id="练习-6分子图的掩码双池化读出">练习 6：分子图的掩码双池化读出</h3>
+<p>本章的 <code>MaskedDualReadout</code> 把每个分子的原子表示压成一个图向量：</p>
+<p><span class="math display">\[
+h_{\text{graph}}=[\operatorname{MeanPool}(H)\Vert\operatorname{MaxPool}(H)].
+\]</span></p>
+<p>设一个 batch 有 <span class="math inline">\(B=3\)</span> 个分子，最大原子数 <span class="math inline">\(N=5\)</span>，隐藏维度 <span class="math inline">\(H=2\)</span>。真实原子数分别为 5、3、1。节点表示（行是原子，列是特征）为</p>
+<pre class="text"><code>分子 1: [1,2], [3,4], [5,6], [7,8], [9,10]
+分子 2: [1,1], [2,2], [3,3], [100,100], [100,100]
+分子 3: [4,5], [100,100], [100,100], [100,100], [100,100]</code></pre>
+<p>其中 <code>[100,100]</code> 是 padding，mask 分别为 <code>1,1,1,1,1</code>、<code>1,1,1,0,0</code>、<code>1,0,0,0,0</code>。</p>
+<ul>
+<li>（a） 用 <code>mask$unsqueeze(3)$expand_as(h)</code> 实现 <code>MaskedDualReadout</code>，不要写 batch 循环。</li>
+<li>（b） 计算三个分子的 mean、max 和拼接后的读出向量。</li>
+<li>（c） 计算本章 <code>GraphPredictor</code> 的参数量（<code>in_dim=18</code>、<code>hidden_dim=64</code>、<code>num_global_features=2</code>）。</li>
+<li>（d） 为什么分子 GCN 用行归一化 <span class="math inline">\(\tilde D^{-1}\tilde A\)</span>，而不是 Cora 的对称归一化？<code>torch_clamp(degree, min = 1e-5)</code> 在这里防的是什么？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 6 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）实现。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>readout <span class="ot">&lt;-</span> <span class="cf">function</span>(h, mask) {</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  mask_expanded <span class="ot">&lt;-</span> mask<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">3</span>)<span class="sc">$</span><span class="fu">expand_as</span>(h)</span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>  h_masked <span class="ot">&lt;-</span> h <span class="sc">*</span> mask_expanded</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>  sum_h <span class="ot">&lt;-</span> h_masked<span class="sc">$</span><span class="fu">sum</span>(<span class="at">dim =</span> <span class="dv">2</span>)</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>  num_atoms <span class="ot">&lt;-</span> mask<span class="sc">$</span><span class="fu">sum</span>(<span class="at">dim =</span> <span class="dv">2</span>, <span class="at">keepdim =</span> <span class="cn">TRUE</span>)<span class="sc">$</span><span class="fu">clamp</span>(<span class="at">min =</span> <span class="dv">1</span>)</span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>  mean_h <span class="ot">&lt;-</span> sum_h <span class="sc">/</span> num_atoms</span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>  max_h <span class="ot">&lt;-</span> h_masked<span class="sc">$</span><span class="fu">max</span>(<span class="at">dim =</span> <span class="dv">2</span>)[[<span class="dv">1</span>]]</span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">torch_cat</span>(<span class="fu">list</span>(mean_h, max_h), <span class="at">dim =</span> <span class="dv">2</span>)</span>
+<span id="cb11-11"><a href="#cb11-11" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（b）输出。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>h <span class="ot">&lt;-</span> <span class="fu">torch_zeros</span>(<span class="dv">3</span>, <span class="dv">5</span>, <span class="dv">2</span>)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>h[<span class="dv">1</span>, , ] <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">6</span>, <span class="dv">7</span>, <span class="dv">8</span>, <span class="dv">9</span>, <span class="dv">10</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>), <span class="at">nrow =</span> <span class="dv">5</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>h[<span class="dv">2</span>, , ] <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">3</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>), <span class="at">nrow =</span> <span class="dv">5</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>h[<span class="dv">3</span>, , ] <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>  <span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span>, <span class="dv">100</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>), <span class="at">nrow =</span> <span class="dv">5</span>, <span class="at">byrow =</span> <span class="cn">TRUE</span>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>mask <span class="ot">&lt;-</span> <span class="fu">torch_zeros</span>(<span class="dv">3</span>, <span class="dv">5</span>)</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>mask[<span class="dv">1</span>, ] <span class="ot">&lt;-</span> <span class="dv">1</span></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>mask[<span class="dv">2</span>, <span class="dv">1</span><span class="sc">:</span><span class="dv">3</span>] <span class="ot">&lt;-</span> <span class="dv">1</span></span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>mask[<span class="dv">3</span>, <span class="dv">1</span>] <span class="ot">&lt;-</span> <span class="dv">1</span></span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a><span class="fu">readout</span>(h, mask)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<pre class="text"><code>mean_h
+ 5  6
+ 2  2
+ 4  5
+
+max_h
+  9  10
+  3   3
+  4   5
+
+cat(mean_h, max_h)
+  5   6   9  10
+  2   2   3   3
+  4   5   4   5</code></pre>
+<p>Padding 的 100 完全没有进入池化：<code>mask_expanded</code> 把 padding 位置乘成 0，mean 的分母又用 <code>mask$sum()</code> 而不是固定的 <code>N</code>。这就是“变长分子图”能组成 batch 的关键。</p>
+<p>（c）参数量。</p>
+<p>三层 <code>BatchedGCNLayer</code>：</p>
+<ul>
+<li>第一层 <span class="math inline">\(18\to64\)</span>：<span class="math inline">\(18\times64+64=1{,}216\)</span>；</li>
+<li>第二层 <span class="math inline">\(64\to64\)</span>：<span class="math inline">\(64\times64+64=4{,}160\)</span>；</li>
+<li>第三层 <span class="math inline">\(64\to64\)</span>：<span class="math inline">\(4{,}160\)</span>。</li>
+</ul>
+<p>图读出后维度 <span class="math inline">\(64\times2=128\)</span>，拼接 2 个全局特征得到 <span class="math inline">\(130\)</span>。<code>nn_layer_norm(130)</code> 有 <span class="math inline">\(130\)</span> 个缩放参数和 <span class="math inline">\(130\)</span> 个偏置，共 260。预测头：</p>
+<ul>
+<li><code>fc1</code>：<span class="math inline">\(130\times64+64=8{,}384\)</span>；</li>
+<li><code>fc2</code>：<span class="math inline">\(64\times1+1=65\)</span>。</li>
+</ul>
+<p>总计</p>
+<p><span class="math display">\[
+1{,}216+4{,}160+4{,}160+260+8{,}384+65
+=\boxed{18{,}245}.
+\]</span></p>
+<p>（d）行归一化与对称归一化。</p>
+<p>分子图里每个原子最多只有几个共价键，度数分布远没有社交网络那么极端；本章的 <code>BatchedGCNLayer</code> 用的是</p>
+<p><span class="math display">\[
+\tilde A_{\text{norm}}=\tilde D^{-1}\tilde A,
+\]</span></p>
+<p>即每个原子对自己的邻居做平均。Cora 的对称归一化 <span class="math inline">\(\tilde D^{-1/2}\tilde A\tilde D^{-1/2}\)</span> 同时压低高度节点在发送端和接收端的权重，适合引用网络中“综述文章引用很多”这类长尾结构。两种做法都合理，关键是训练/推理保持一致。</p>
+<p><code>torch_clamp(degree, min = 1e-5)</code> 防的是 padding 原子度数为 0 时除以 0。<code>max_atoms=55</code> 的 batch 里，短分子会有大量 padding 行，邻接矩阵对应行全 0；clamp 后 <code>degree_inv</code> 是一个很大的有限数，但 <code>adj_norm = adj * degree_inv</code> 仍然全 0（因为 <code>adj</code> 行是 0），所以 padding 原子不会污染真实原子。读出层再用 mask 把 padding 排除。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="三开放思考" class="level2">
+<h2 class="anchored" data-anchor-id="三开放思考">三、开放思考</h2>
+<section id="练习-7gcngatlightgcn-的适用边界" class="level3">
+<h3 class="anchored" data-anchor-id="练习-7gcngatlightgcn-的适用边界">练习 7：GCN、GAT、LightGCN 的适用边界</h3>
+<p>请从模型假设、数据形态和工程约束三个角度回答：</p>
+<ul>
+<li>（a） GCN、GAT、LightGCN 各自最适合什么场景？为什么 LightGCN 的“去掉 <span class="math inline">\(W\)</span> 和 <span class="math inline">\(\sigma\)</span>”只适用于 ID-only 的协同过滤，而不能直接搬到分子图？</li>
+<li>（b） 过平滑为什么随着层数增加而出现？列出至少三种缓解方法，并说明 LightGCN 的层平均属于哪一类。</li>
+<li>（c） 新用户和新物品的冷启动分别怎么处理？Folding-in 能解决哪一个，不能解决哪一个？</li>
+<li>（d） 本章用 Cora 节点 1619 的异配性例子说明 GAT 的注意力可以“跨类别寻找语义互补的邻居”。这个例子能证明 GAT 一定优于 GCN 吗？你会怎样设计实验来验证？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 7 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）适用场景。</p>
+<ul>
+<li>GCN：节点有特征、图结构相对同配（邻居倾向同类），计算预算有限。Cora 的引用网络就是典型：词袋特征 + 引用边，两层 GCN 就能得到 80% 左右的准确率。它给所有邻居按度数分配固定权重，简单、稳定、参数少。</li>
+<li>GAT：邻居重要性差异大、存在异配边，或者需要解释“模型看了谁”。它用可学习的加性注意力替代固定的 <span class="math inline">\(\tilde D^{-1/2}\tilde A\tilde D^{-1/2}\)</span>，可以为不同邻居分配不同权重；代价是 <span class="math inline">\(N\times N\)</span> 的得分矩阵和更多参数。Cora 上本章报告 GAT 81.89%、GCN 80.06%，但这是单次划分、不同超参数的比较，不能把 1.8 个百分点全部归因于注意力。</li>
+<li>LightGCN：用户-物品二部图、ID-only 隐式反馈、需要大规模稀疏矩阵传播。它去掉特征变换和非线性，只保留邻居聚合与层平均，参数几乎只有初始 embedding；在 MovieLens 1M 上本章报告 HR@10 0.7714，明显高于 Item-CF 的 0.6445 和 GNN-Enhanced CF 的 0.6772。</li>
+</ul>
+<p>LightGCN 的简化依赖“输入没有内容特征”这个前提。分子图的节点特征（元素、电荷、杂化态、芳香性）本身有丰富的化学语义，<span class="math inline">\(W\)</span> 负责把这些手工特征映射到任务空间，<span class="math inline">\(\sigma\)</span> 提供非线性；如果直接去掉，模型就只剩对原子 one-hot/属性做线性平均，表达能力会明显下降。所以“LightGCN 更简单”不等于“所有图都应该去掉 <span class="math inline">\(W\)</span> 和 <span class="math inline">\(\sigma\)</span>”。</p>
+<p>（b）过平滑。</p>
+<p>每层传播都把节点表示替换为邻居的加权平均。层数增加，感受野扩大，但不同节点共享的邻域越来越多；反复平均会压低高频信号，让同一连通分量内的表示趋于相似。极端情况下，所有节点难以区分，分类器只能输出接近先验的预测。</p>
+<p>常见缓解方法：</p>
+<ol type="1">
+<li>残差连接：<span class="math inline">\(H^{(l+1)}=H^{(l)}+\text{GNN}(H^{(l)})\)</span>，保留自身信息；</li>
+<li>JKNet / 层拼接：把各层表示拼接或加权求和，让模型自己选择半径；</li>
+<li>DropEdge：训练时随机删边，减少过度平滑和过拟合；</li>
+<li>层平均：LightGCN 的 <span class="math inline">\(e=\frac1{K+1}\sum_k e^{(k)}\)</span>，直接混合不同层；</li>
+<li>限制层数：很多任务 2–3 层就足够。</li>
+</ol>
+<p>LightGCN 的层平均属于“多层表示融合”，和 JKNet 的思想相近；它不是通过改传播矩阵，而是通过输出组合来保留第 0 层的 ID 信息。</p>
+<p>（c）冷启动。</p>
+<ul>
+<li>新用户：已有物品 embedding 可用时，Folding-in 把用户交互过的物品向量取平均（或按度数加权），实时构造用户向量；也可以训练一个用户侧内容塔，把年龄、地域、设备等特征映射到同一空间。</li>
+<li>新物品：没有任何交互，LightGCN 的图传播没有邻居可用，Folding-in 无法直接构造物品向量。需要物品内容特征（文本、图像、类目、价格）、双塔的物品塔、GraphSAGE 式的属性聚合，或者等物品积累足够交互后重新训练。</li>
+<li>评估：冷启动要单独报告，不能把新用户/新物品混进整体指标里“平均掉”；否则一个在老用户上很强的模型，可能在新用户上完全失效。</li>
+</ul>
+<p>Folding-in 解决的是“物品侧已训练好、用户侧新来”的归纳式推断；它不解决新物品，也不解决完全没有交互的新用户（此时连平均的集合都是空的）。</p>
+<p>（d）异配性例子与实验设计。</p>
+<p>不能。节点 1619 的注意力可视化是一个个案：它说明在这个训练好的模型里，某些跨类别邻居获得了较高权重，但不能证明：</p>
+<ol type="1">
+<li>这个权重是“因为语义互补”而不是训练集/随机种子的偶然；</li>
+<li>GAT 在所有异配节点上都优于 GCN；</li>
+<li>81.89% 与 80.06% 的差距（约 1.8 个百分点）来自注意力，而不是 8 个头、300 轮、不同 dropout/学习率带来的容量差异。</li>
+</ol>
+<p>要验证，至少需要：</p>
+<ul>
+<li>控制变量：同一数据划分、同一训练轮数/参数量/正则化，比较 GCN 与 GAT；最好做多次随机种子，报告均值和标准差。</li>
+<li>分层评估：按节点的同配比例（邻居中同类占比）分组，看 GAT 的增益是否集中在低同配组。</li>
+<li>消融：把 GAT 的注意力替换为均匀权重（或固定度数权重），保持其他结构不变；如果增益消失，才能把功劳归给注意力。</li>
+<li>鲁棒性：在合成异配图、随机边扰动、不同同配率下重复实验。</li>
+<li>可解释性：检查高注意力邻居是否真的与标签/特征相关，而不是只看一张 ego-network 图。</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="四纠错与陷阱" class="level2">
+<h2 class="anchored" data-anchor-id="四纠错与陷阱">四、纠错与陷阱</h2>
+<section id="练习-8七个容易复现的坑" class="level3">
+<h3 class="anchored" data-anchor-id="练习-8七个容易复现的坑">练习 8：七个容易复现的坑</h3>
+<p>下面七段代码/结论分别来自本章或配套脚本。请指出问题、解释后果，并给出修正。</p>
+<ul>
+<li><p>（a） <code>code/11_GCN_Zachary.R</code> 的输出注释写着：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"预测结果 (0=Mr.Hi, 1=John A):</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(<span class="fu">as.numeric</span>(predictions))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>但标签是 <code>1 = Mr. Hi, 2 = John A</code>。<code>torch_argmax()</code> 返回的下标从几开始？这段注释会误导读者什么？</p></li>
+<li><p>（b） 正文说 Cora 的 GCN “经过 50 轮训练”得到 80.06%，但 <code>code/11_GCN_Cora.R</code> 里写的是 <code>epochs &lt;- 100</code>。这会影响复现吗？</p></li>
+<li><p>（c） 正文说 BPR 的负样本是“随机抽取一个未交互物品”，代码却是：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>neg_i <span class="ot">&lt;-</span> <span class="fu">torch_randint</span>(</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">low =</span> num_users <span class="sc">+</span> <span class="dv">1</span>, <span class="at">high =</span> num_nodes <span class="sc">+</span> <span class="dv">1</span>,</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">size =</span> <span class="fu">c</span>(<span class="fu">length</span>(batch_idx)), <span class="at">dtype =</span> <span class="fu">torch_long</span>()</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>这段代码会抽到正样本吗？在 MovieLens 1M 上大概多严重？</p></li>
+<li><p>（d） LightGCN 的公式是 <span class="math display">\[
+e_u^{(k+1)}=\sum_{i\in\mathcal N_u}
+\frac{1}{\sqrt{|D_u|}\sqrt{|D_i|}}e_i^{(k)},
+\]</span> 但 <code>build_sparse_adjacency()</code> 里有一行</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb16"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a>self_loop <span class="ot">&lt;-</span> <span class="fu">data.table</span>(<span class="at">src =</span> <span class="dv">1</span><span class="sc">:</span>n_nodes, <span class="at">dst =</span> <span class="dv">1</span><span class="sc">:</span>n_nodes)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>这会给传播带来什么变化？标准 LightGCN 需要自环吗？</p></li>
+<li><p>（e） GAT 用 <code>-1e9</code> 填充不存在的边。如果某个节点没有邻居也没有自环，整行都是 <code>-1e9</code>，Softmax 会输出什么？为什么本章 Cora 没有触发？</p></li>
+<li><p>（f） 正文说 ESOL 的 MSE 收敛到 0.43，“对应平均预测误差约 0.65 LogS”。0.65 是 MAE 还是 RMSE？从 0.43 能直接推出 MAE 吗？</p></li>
+<li><p>（g） 正文一面说 <span class="math inline">\(\vec a_{src}\)</span> 评估“源节点（发出注意力）”，一面又说“行表示目标节点（接收），列表示源节点（发送）”。代码 <code>scores &lt;- attn_src + attn_dst$t()</code> 后接 <code>attention %*% wh</code>，到底哪一行是发送者、哪一行是接收者？名称需要怎么改？</p></li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 8 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）Zachary 的 0/1 注释。</p>
+<p>R torch 的 <code>torch_argmax()</code> 返回 1-based 下标，和 R 的向量索引一致。标签向量本身也是 1/2：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>manual_labels <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>, ..., <span class="dv">2</span>, <span class="dv">2</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>所以预测结果是 1 或 2，不可能是 0 或 1。实际运行会得到类似</p>
+<pre class="text"><code>pred: 1,1,2,1,1,1,1,1,2,2,...
+correct: 33 / 34
+wrong: 1</code></pre>
+<p>节点 3 是唯一分错的节点。注释应改为：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"预测结果 (1=Mr.Hi, 2=John A):</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>如果读者按“0=Mr.Hi, 1=John A”去映射，会把所有预测整体错位：预测 1 被当成 John A，预测 2 被当成不存在的类别。这个错误不影响模型训练，但会让结果解读完全反掉。</p>
+<p>（b）Cora 的 50/100 轮。</p>
+<p>正文与脚本不一致。<code>code/11_GCN_Cora.R:111</code> 是 <code>epochs &lt;- 100</code>，而正文 <code>11-gnn.qmd:391</code> 说“经过 50 轮训练”。在本机固定种子的一次复核中：</p>
+<ul>
+<li>50 轮：测试准确率约 80.80%；</li>
+<li>100 轮：测试准确率约 79.79%（换 torch 随机种子会得到 78.89% 等不同值）。</li>
+</ul>
+<p>随机种子、初始化、dropout 都会让数值波动，但“脚本默认 100 轮”与“正文说 50 轮”是明确的配置不一致。读者直接运行脚本，得到的不一定是正文报告的 80.06%。修正方式：要么把脚本改成 <code>epochs &lt;- 50</code>，要么把正文改成“100 轮”并重新报告指标；同时保留随机种子和多次运行的均值/标准差，避免把单次结果当成稳定结论。</p>
+<p>（c）BPR 负采样抽到正样本。</p>
+<p>会。<code>torch_randint(low = num_users + 1, high = num_nodes + 1)</code> 在全部物品节点上均匀采样，没有排除当前用户已经交互过的物品。MovieLens 1M 按本章 80/20 时序切分后：</p>
+<ul>
+<li>训练集（80/20 时序切分后）有 797,758 条交互、6040 个用户；负采样在<strong>全库 3706 个物品</strong>上均匀进行（训练集实际覆盖其中 3667 个）；</li>
+<li>每个用户的训练正样本数平均 132.08，中位数 76，最大 1851；</li>
+<li>对一条正样本对随机抽一个物品，抽中该用户某个训练正样本的平均概率约</li>
+</ul>
+<p><span class="math display">\[
+\frac{132.08}{3706}\approx 3.56\%,
+\]</span></p>
+<p>最大约 49.95%（1851/3706，有一个用户交互了接近一半的物品）。</p>
+<p>抽中正样本时，<span class="math inline">\(e_i=e_j\)</span>，BPR 得分差为 0，<span class="math inline">\(\log\sigma(0)=-\log2\)</span>，损失不是 0 但梯度对嵌入的区分项会消失；更糟的是同一个物品同时以正、负身份进入损失，标签自相矛盾。修正：对每个 <code>(u, i)</code> 从 <code>setdiff(all_items, user_positive_items[[u]])</code> 中采样；批量实现可以先用 <code>torch_randint</code> 抽候选，再用布尔掩码/重采样把冲突位置替换掉，或者维护每个用户的负样本候选数组。</p>
+<p>（d）LightGCN 的自环。</p>
+<p>标准 LightGCN 的二部图传播不加自环：</p>
+<p><span class="math display">\[
+e_u^{(k+1)}=\sum_{i\in\mathcal N_u}
+\frac{1}{\sqrt{|D_u|}\sqrt{|D_i|}}e_i^{(k)},
+\]</span></p>
+<p>第 0 层 <span class="math inline">\(e_u^{(0)}\)</span> 通过层平均保留：</p>
+<p><span class="math display">\[
+e_u=\frac1{K+1}\sum_{k=0}^K e_u^{(k)}.
+\]</span></p>
+<p>代码 <code>self_loop &lt;- data.table(src = 1:n_nodes, dst = 1:n_nodes)</code> 把每个节点连到自己，传播变成“邻居 + 自身”的混合，而且度数 <span class="math inline">\(D\)</span> 也把自环保留进去，连非自环边的归一化系数都会变。这不是标准 LightGCN，而是“带自环的 LightGCN 变体”。如果论文/正文的公式没有自环，复现时应删掉 <code>self_loop</code>；如果保留，必须在正文和实验设置里明确说明，并把这组指标标成变体结果。</p>
+<p>（e）GAT 全掩码行。</p>
+<p>整行 <code>-1e9</code> 经过 Softmax 会得到均匀分布 <span class="math inline">\((1/N,\dots,1/N)\)</span>，而不是“没有邻居”。本章 Cora 在构图时执行了</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>adj_binary <span class="ot">&lt;-</span> adj <span class="sc">+</span> <span class="fu">diag</span>(num_nodes)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>每个节点都有自环，所以每一行至少有一个合法位置，不会全掩码。对没有自环的图，应显式处理空邻居行（置零或使用空邻居向量），或者统一加自环；不要依赖 <code>-1e9</code> 的数值下溢。</p>
+<p>（f）MSE 与 RMSE。</p>
+<p><span class="math display">\[
+\operatorname{RMSE}=\sqrt{\operatorname{MSE}}=\sqrt{0.43}\approx0.6557.
+\]</span></p>
+<p>所以 0.65 是 RMSE，不是 MAE。MSE 只给出平方误差的均值，不能直接推出平均绝对误差；MAE 需要单独在验证集上计算。正文应写成“均方根误差（RMSE）约 0.66 LogS”，或者如果确实想报告 MAE，就补上 MAE 的数值。把 RMSE 说成“平均预测误差”在口语里可以接受，但在模型对比和误差解释里容易和 MAE 混淆。</p>
+<p>（g）GAT 的发送/接收方向。</p>
+<p>代码：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>attn_src <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(wh, self<span class="sc">$</span>a_src)   <span class="co"># N x 1</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>attn_dst <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(wh, self<span class="sc">$</span>a_dst)   <span class="co"># N x 1</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a>scores <span class="ot">&lt;-</span> attn_src <span class="sc">+</span> attn_dst<span class="sc">$</span><span class="fu">t</span>()          <span class="co"># N x N</span></span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a>attention <span class="ot">&lt;-</span> <span class="fu">nnf_softmax</span>(scores, <span class="at">dim =</span> <span class="dv">2</span>)   <span class="co"># 每行归一化</span></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a>h_prime <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(attention, wh)      <span class="co"># 行 i 聚合列 j</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>h_prime</code> 的第 <span class="math inline">\(i\)</span> 行是 <span class="math inline">\(\sum_j P_{ij}wh_j\)</span>，所以第 <span class="math inline">\(i\)</span> 行是接收者，第 <span class="math inline">\(j\)</span> 列是发送者。而 <code>attn_src</code> 作用在行 <span class="math inline">\(i\)</span> 上、<code>attn_dst</code> 作用在列 <span class="math inline">\(j\)</span> 上，因此按“src=发送、dst=接收”的命名，代码里的两个名字正好反了。正文第 562 行其实写对了：“行表示目标节点（接收），列表示源节点（发送）”；前面第 473–482 行的解释则把 <span class="math inline">\(i\)</span> 说成发送者，二者矛盾。</p>
+<p>修法有两种：</p>
+<ol type="1">
+<li>交换命名：把行向量叫 <code>a_dst</code>（接收者），列向量叫 <code>a_src</code>（发送者）；或</li>
+<li>保持名字不变，在正文中明确采用“行=src、列=dst”的相反约定，并把“发出/接收”的解释对调。</li>
+</ol>
+<p>模型训练本身不受影响（只是名称和解释），但读代码、写文档和做注意力可视化时必须统一，否则会把“节点 i 对 j 的注意力”画反。</p>
+</div>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="进一步练习可选" class="level2">
+<h2 class="anchored" data-anchor-id="进一步练习可选">进一步练习（可选）</h2>
+<p>如果希望把本章内容串起来，可以再做一个小项目：在 Zachary 或 Cora 上分别训练 GCN、GAT、GraphSAGE，固定同一组训练/测试节点，比较测试准确率、参数量和训练时间；然后把 Cora 的边随机删除 10%、30%、50%，观察三种模型对结构噪声的鲁棒性。报告时至少给出三次随机种子的均值和标准差，不要只报最好的一次。</p>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "已复制");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "已复制");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="./10-recsys-exercises.html" class="pagination-link" aria-label="10 深度推荐模型">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">10 深度推荐模型</span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="./12-vae-exercises.html" class="pagination-link" aria-label="12 变分自编码器">
+        <span class="nav-page-text">12 变分自编码器</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

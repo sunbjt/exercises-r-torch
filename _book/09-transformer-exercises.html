@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-Hans" xml:lang="zh-Hans"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>09 Transformer – 深度学习与生成式 AI：课后练习</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./10-recsys-exercises.html" rel="next">
+<link href="./08-rnn-lstm-exercises.html" rel="prev">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-c10c624cab4f32a71991352778f012ac.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "textbox",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "没有结果",
+    "search-matching-documents-text": "匹配的文档",
+    "search-copy-link-title": "复制搜索链接",
+    "search-hide-matches-text": "隐藏其它匹配结果",
+    "search-more-match-text": "更多匹配结果",
+    "search-more-matches-text": "更多匹配结果",
+    "search-clear-button-title": "清除",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "取消",
+    "search-submit-button-title": "提交",
+    "search-label": "搜索"
+  }
+}</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="theme.css">
+</head>
+
+<body class="nav-sidebar floating quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="./09-transformer-exercises.html">09 Transformer</a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="搜索" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="./">深度学习与生成式 AI：课后练习</a> 
+        <div class="sidebar-tools-main">
+  <a href="" class="quarto-reader-toggle quarto-navigation-tool px-1" onclick="window.quartoToggleReader(); return false;" title="切换阅读器模式">
+  <div class="quarto-reader-toggle-btn">
+  <i class="bi"></i>
+  </div>
+</a>
+</div>
+    </div>
+      </div>
+        <div class="mt-2 flex-shrink-0 align-items-center">
+        <div class="sidebar-search">
+        <div id="quarto-search" class="" title="搜索"></div>
+        </div>
+        </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">使用说明</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./03-math-ml-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">03 自动微分</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./04-backforward-nn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">04 多层感知机</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./05-optimizer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">05 优化与训练动力学</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./06-regularization-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">06 工程化实验</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./07-convolution-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">07 卷积网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./08-rnn-lstm-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">08 循环网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./09-transformer-exercises.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">09 Transformer</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./10-recsys-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">10 深度推荐模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./11-gnn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">11 图神经网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./12-vae-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">12 变分自编码器</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./13-GAN-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">13 生成对抗网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./14-diffusion-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">14 扩散模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./15-explainable-ai-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">15 解释性与诊断</span></a>
+  </div>
+</li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">本页目录</h2>
+   
+  <ul>
+  <li><a href="#一概念与推导" id="toc-一概念与推导" class="nav-link active" data-scroll-target="#一概念与推导">一、概念与推导</a>
+  <ul class="collapse">
+  <li><a href="#练习-1缩放点积注意力的形状复杂度与缩放" id="toc-练习-1缩放点积注意力的形状复杂度与缩放" class="nav-link" data-scroll-target="#练习-1缩放点积注意力的形状复杂度与缩放">练习 1：缩放点积注意力的形状、复杂度与缩放</a></li>
+  <li><a href="#练习-2多头注意力的参数量与头拆分" id="toc-练习-2多头注意力的参数量与头拆分" class="nav-link" data-scroll-target="#练习-2多头注意力的参数量与头拆分">练习 2：多头注意力的参数量与头拆分</a></li>
+  <li><a href="#练习-3位置编码与置换等变性" id="toc-练习-3位置编码与置换等变性" class="nav-link" data-scroll-target="#练习-3位置编码与置换等变性">练习 3：位置编码与置换等变性</a></li>
+  </ul></li>
+  <li><a href="#二编程实践" id="toc-二编程实践" class="nav-link" data-scroll-target="#二编程实践">二、编程实践</a>
+  <ul class="collapse">
+  <li><a href="#练习-4手写多头注意力并与-nn_multihead_attention-对齐" id="toc-练习-4手写多头注意力并与-nn_multihead_attention-对齐" class="nav-link" data-scroll-target="#练习-4手写多头注意力并与-nn_multihead_attention-对齐">练习 4：手写多头注意力并与 <code>nn_multihead_attention</code> 对齐</a></li>
+  <li><a href="#练习-5因果掩码下一词对齐与温度采样" id="toc-练习-5因果掩码下一词对齐与温度采样" class="nav-link" data-scroll-target="#练习-5因果掩码下一词对齐与温度采样">练习 5：因果掩码、下一词对齐与温度采样</a></li>
+  <li><a href="#练习-6querysuggestgpt-的参数量与-lora-节省" id="toc-练习-6querysuggestgpt-的参数量与-lora-节省" class="nav-link" data-scroll-target="#练习-6querysuggestgpt-的参数量与-lora-节省">练习 6：QuerySuggestGPT 的参数量与 LoRA 节省</a></li>
+  </ul></li>
+  <li><a href="#三开放思考" id="toc-三开放思考" class="nav-link" data-scroll-target="#三开放思考">三、开放思考</a>
+  <ul class="collapse">
+  <li><a href="#练习-7表格-transformercls-与注意力解释" id="toc-练习-7表格-transformercls-与注意力解释" class="nav-link" data-scroll-target="#练习-7表格-transformercls-与注意力解释">练习 7：表格 Transformer、<code>[CLS]</code> 与注意力解释</a></li>
+  </ul></li>
+  <li><a href="#四纠错与陷阱" id="toc-四纠错与陷阱" class="nav-link" data-scroll-target="#四纠错与陷阱">四、纠错与陷阱</a>
+  <ul class="collapse">
+  <li><a href="#练习-8形状索引与初始化陷阱" id="toc-练习-8形状索引与初始化陷阱" class="nav-link" data-scroll-target="#练习-8形状索引与初始化陷阱">练习 8：形状、索引与初始化陷阱</a></li>
+  </ul></li>
+  <li><a href="#本章速查" id="toc-本章速查" class="nav-link" data-scroll-target="#本章速查">本章速查</a></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">09 Transformer</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>本章从缩放点积注意力出发，依次讨论多头注意力、位置编码、残差与 LayerNorm、原生 Transformer 编码器、表格数据上的 Token 化与 <code>[CLS]</code>、GPT 式的自回归生成，以及 LoRA 微调。下面 8 道题按四类编排：</p>
+<ul>
+<li>概念与推导（练习 1–3）：注意力的形状与复杂度、缩放为什么能稳定 softmax、多头注意力的参数量与头拆分、位置编码与置换等变性。</li>
+<li>编程实践（练习 4–6）：手写多头注意力并与 <code>nn_multihead_attention</code> 对齐、因果掩码与温度采样、QuerySuggestGPT 与 LoRA 的参数量核算。</li>
+<li>开放思考（练习 7）：表格 Transformer 与 MLP 的取舍、<code>[CLS]</code> 注意力的可解释性边界、ALiBi 外推与 LoRA 的容量权衡。</li>
+<li>纠错与陷阱（练习 8）：R 与 Python 的 <code>unsqueeze</code>/embedding 索引差异、logits 切片、掩码方向与 LoRA 初始化。</li>
+</ul>
+<p>建议用时约 4 小时。练习 1、2、4、8 可以先做；练习 3 的证明和练习 5 的掩码实验建议配合 <code>torch</code> 实际跑一遍。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过，固定种子后你的结果应当接近；凡是写“约”的地方，不必逐位对齐。</p>
+<section id="一概念与推导" class="level2">
+<h2 class="anchored" data-anchor-id="一概念与推导">一、概念与推导</h2>
+<section id="练习-1缩放点积注意力的形状复杂度与缩放" class="level3">
+<h3 class="anchored" data-anchor-id="练习-1缩放点积注意力的形状复杂度与缩放">练习 1：缩放点积注意力的形状、复杂度与缩放</h3>
+<p>考虑批量大小 <span class="math inline">\(B=8\)</span>、查询长度 <span class="math inline">\(T=512\)</span>、键/值长度 <span class="math inline">\(S=512\)</span>、键维度 <span class="math inline">\(d_k=64\)</span>、值维度 <span class="math inline">\(d_v=64\)</span> 的缩放点积注意力：</p>
+<p><span class="math display">\[
+\operatorname{Attention}(Q,K,V)
+=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
+\]</span></p>
+<p>请回答：</p>
+<ul>
+<li>（a） 设 <span class="math inline">\(Q\in\mathbb{R}^{B\times T\times d_k}\)</span>，<span class="math inline">\(K\in\mathbb{R}^{B\times S\times d_k}\)</span>，<span class="math inline">\(V\in\mathbb{R}^{B\times S\times d_v}\)</span>。写出 scores、注意力权重和输出的形状；时间复杂度和显存复杂度各是多少？</li>
+<li>（b） 对上面的具体数值，scores 有多少个元素？用 float32 存储需要多少 MiB？只计算 <span class="math inline">\(QK^\top\)</span> 大约需要多少次浮点运算（按一次乘加算 2 FLOPs）？</li>
+<li>（c） 假设 <span class="math inline">\(q_i,k_i\)</span> 独立同分布，均值为 0、方差为 1。证明点积 <span class="math inline">\(q\cdot k=\sum_{i=1}^{d_k}q_i k_i\)</span> 的方差是 <span class="math inline">\(d_k\)</span>，因此除以 <span class="math inline">\(\sqrt{d_k}\)</span> 后方差约为 1。用 R 模拟 <span class="math inline">\(d_k=64\)</span> 验证。</li>
+<li>（d） 若 <span class="math inline">\(d_k=512\)</span> 且不做缩放，logits 的标准差大约是多少？这会让 softmax 和它的雅可比矩阵发生什么？为什么说“梯度消失”在这里不是由于激活函数，而是由于 softmax 饱和？</li>
+<li>（e） 为什么说注意力的计算和显存对序列长度是二次的？当 <span class="math inline">\(T\)</span> 从 512 增加到 4096 时，scores 的元素个数和显存各变成多少倍？列出至少一种降低长序列开销的思路。</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-1-contents" aria-controls="callout-1" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 1 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-1" class="callout-1-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）形状与复杂度。</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">量</th>
+<th style="text-align: left;">形状</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><span class="math inline">\(Q\)</span></td>
+<td style="text-align: left;"><span class="math inline">\([B,T,d_k]\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><span class="math inline">\(K,V\)</span></td>
+<td style="text-align: left;"><span class="math inline">\([B,S,d_k]\)</span>、<span class="math inline">\([B,S,d_v]\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><span class="math inline">\(QK^\top\)</span> / scores / 权重</td>
+<td style="text-align: left;"><span class="math inline">\([B,T,S]\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">输出</td>
+<td style="text-align: left;"><span class="math inline">\([B,T,d_v]\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>计算 <span class="math inline">\(QK^\top\)</span> 需要 <span class="math inline">\(O(BTSd_k)\)</span> 时间，加权求和 <span class="math inline">\(AV\)</span> 需要 <span class="math inline">\(O(BTSd_v)\)</span>，合起来常写成 <span class="math inline">\(O(BTSd)\)</span>。显存的主要项是 scores/attention 矩阵 <span class="math inline">\([B,T,S]\)</span>，即 <span class="math inline">\(O(BTS)\)</span>；此外还有 <span class="math inline">\(Q,K,V\)</span> 和输出，合计仍是 <span class="math inline">\(O(B(T+S)d+BTS)\)</span>。</p>
+<p>（b）具体数值。</p>
+<p>scores 元素数：</p>
+<p><span class="math display">\[
+BTS=8\times512\times512=2{,}097{,}152.
+\]</span></p>
+<p>float32 每个元素 4 字节：</p>
+<p><span class="math display">\[
+2{,}097{,}152\times4=8{,}388{,}608\text{ bytes}=8\text{ MiB}.
+\]</span></p>
+<p><span class="math inline">\(QK^\top\)</span> 的乘加次数为 <span class="math inline">\(BTSd_k\)</span>，按 2 FLOPs/乘加：</p>
+<p><span class="math display">\[
+2BTSd_k=2\times8\times512\times512\times64
+=268{,}435{,}456\approx2.68\times10^8\ \text{FLOPs}.
+\]</span></p>
+<p><span class="math inline">\(AV\)</span> 的计算量同量级（把 <span class="math inline">\(d_k\)</span> 换成 <span class="math inline">\(d_v\)</span>），所以两项合计约 <span class="math inline">\(5.37\times10^8\)</span> FLOPs。</p>
+<p>（c）缩放方差的推导。</p>
+<p>令 <span class="math inline">\(q_i,k_i\)</span> 独立、均值 0、方差 1，则</p>
+<p><span class="math display">\[
+\mathbb{E}[q_i k_i]=\mathbb{E}[q_i]\mathbb{E}[k_i]=0,
+\]</span></p>
+<p><span class="math display">\[
+\operatorname{Var}(q_i k_i)
+=\mathbb{E}[q_i^2k_i^2]-\left(\mathbb{E}[q_i k_i]\right)^2
+=\mathbb{E}[q_i^2]\mathbb{E}[k_i^2]=1.
+\]</span></p>
+<p>不同 <span class="math inline">\(i\)</span> 的乘积互相独立，所以</p>
+<p><span class="math display">\[
+\operatorname{Var}\left(\sum_{i=1}^{d_k}q_i k_i\right)
+=\sum_{i=1}^{d_k}\operatorname{Var}(q_i k_i)=d_k.
+\]</span></p>
+<p>除以 <span class="math inline">\(\sqrt{d_k}\)</span> 后，方差变为 <span class="math inline">\(d_k/(\sqrt{d_k})^2=1\)</span>。R 模拟（<code>set.seed(123)</code>，20 万个样本）得到：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="dv">64</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>q <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">200000</span>, d)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>k <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">200000</span>, d)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>dot <span class="ot">&lt;-</span> (q <span class="sc">*</span> k)<span class="sc">$</span><span class="fu">sum</span>(<span class="at">dim =</span> <span class="dv">2</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>(dot<span class="sc">$</span><span class="fu">var</span>())              <span class="co"># 63.80851</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>((dot <span class="sc">/</span> <span class="fu">sqrt</span>(d))<span class="sc">$</span><span class="fu">var</span>())  <span class="co"># 0.9970079</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（d）不缩放时的 softmax 饱和。</p>
+<p><span class="math inline">\(d_k=512\)</span> 时点积的标准差约为 <span class="math inline">\(\sqrt{512}\approx22.6\)</span>。若每一行有 512 个 key，最大 logit 与其余 logit 的差距会被放大到几十，softmax 几乎变成 one-hot：最大值接近 1，其余接近 0。</p>
+<p>softmax 对 logits <span class="math inline">\(z\)</span> 的雅可比是</p>
+<p><span class="math display">\[
+\frac{\partial p}{\partial z}
+=\operatorname{diag}(p)-pp^\top.
+\]</span></p>
+<p>当 <span class="math inline">\(p\)</span> 接近 one-hot 时，<span class="math inline">\(p_i(1-p_i)\approx0\)</span>，梯度几乎为零；同时，稍微改变输入就可能让 argmax 翻转，训练很不稳定。除以 <span class="math inline">\(\sqrt{d_k}\)</span> 把 logits 的尺度拉回 <span class="math inline">\(O(1)\)</span>，让 softmax 工作在梯度较健康的区间。这里的饱和来自 softmax，不是 ReLU/Sigmoid 的饱和。</p>
+<p>（e）二次复杂度与外推。</p>
+<p>scores 矩阵有 <span class="math inline">\(BTS\)</span> 个元素。自注意力通常 <span class="math inline">\(T=S\)</span>，所以时间和显存都随 <span class="math inline">\(T^2\)</span> 增长。<span class="math inline">\(T\)</span> 从 512 增到 4096 是 8 倍，scores 元素数变成 <span class="math inline">\(8^2=64\)</span> 倍；对 <span class="math inline">\(B=8\)</span> 的 float32 scores，显存从 8 MiB 增到：</p>
+<p><span class="math display">\[
+8\times4096\times4096\times4
+=536{,}870{,}912\text{ bytes}=512\text{ MiB}.
+\]</span></p>
+<p>这还没有算反向传播保存的中间量。常见缓解思路包括：局部/滑动窗口注意力、稀疏注意力、低秩或核近似（如 Linformer）、以及 FlashAttention 这类通过分块和重计算降低显存占用的实现（它通常不改变 <span class="math inline">\(O(T^2)\)</span> 的渐进复杂度，但显著减少实际显存访问）。此外，长序列任务也可以先做池化、分块或使用层次化注意力。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-2多头注意力的参数量与头拆分" class="level3">
+<h3 class="anchored" data-anchor-id="练习-2多头注意力的参数量与头拆分">练习 2：多头注意力的参数量与头拆分</h3>
+<p>考虑书中手写的 <code>MultiHeadAttention</code>，以及 R torch 原生的 <code>nn_multihead_attention</code>。设模型维度 <span class="math inline">\(D=64\)</span>，头数 <span class="math inline">\(h=8\)</span>，每个头维度 <span class="math inline">\(d_h=D/h=8\)</span>。</p>
+<p>请回答：</p>
+<ul>
+<li>（a） <code>nn_multihead_attention(embed_dim = 64, num_heads = 8, bias = TRUE)</code> 有多少参数？请按 <code>in_proj_weight</code>、<code>in_proj_bias</code>、<code>out_proj.weight</code>、<code>out_proj.bias</code> 拆开。若 <code>bias = FALSE</code> 呢？</li>
+<li>（b） 手写版把 <span class="math inline">\(Q,K,V\)</span> 从 <span class="math inline">\([B,T,D]\)</span> 变成 <span class="math inline">\([B,h,T,d_h]\)</span>，用了 <code>view(c(B,T,h,d_h))</code> 和 <code>transpose(2,3)</code>。写出每一步的形状；为什么拼接前需要 <code>contiguous()</code>？</li>
+<li>（c） 把 <span class="math inline">\(h\)</span> 从 1 改成 8，参数量会变成 8 倍吗？多头到底增加了什么、又没有增加什么？若 <span class="math inline">\(D\)</span> 不能被 <span class="math inline">\(h\)</span> 整除会发生什么？</li>
+<li>（d） <code>nn_transformer_encoder_layer(d_model = 64, nhead = 4, dim_feedforward = 256)</code> 有多少参数？拆成多头注意力、FFN、两个 LayerNorm 三部分。若把 <span class="math inline">\(D\)</span> 换成 256、<code>dim_feedforward</code> 仍为 256（书中 GPT 的配置），每层参数量是多少？若采用常见的 <code>dim_feedforward = 4D = 1024</code>，FFN 部分又是多少？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 2 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）原生多头注意力的参数。</p>
+<p>R torch 把 <span class="math inline">\(Q,K,V\)</span> 的投影合并成一个 <code>in_proj_weight</code>，形状为 <span class="math inline">\([3D,D]\)</span>，偏置为 <span class="math inline">\([3D]\)</span>；输出投影是普通的 <code>nn_linear(D,D)</code>。</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">参数</th>
+<th style="text-align: left;">形状</th>
+<th style="text-align: right;">数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><code>in_proj_weight</code></td>
+<td style="text-align: left;"><span class="math inline">\([3D,D]=[192,64]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(3D^2=12{,}288\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>in_proj_bias</code></td>
+<td style="text-align: left;"><span class="math inline">\([3D]=[192]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(3D=192\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>out_proj.weight</code></td>
+<td style="text-align: left;"><span class="math inline">\([D,D]=[64,64]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(D^2=4{,}096\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>out_proj.bias</code></td>
+<td style="text-align: left;"><span class="math inline">\([D]=[64]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(D=64\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">合计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">16,640</td>
+</tr>
+</tbody>
+</table>
+<p>带偏置时</p>
+<p><span class="math display">\[
+3D^2+3D+D^2+D=4D^2+4D=4(D^2+D)=16{,}640.
+\]</span></p>
+<p><code>bias = FALSE</code> 时只剩 <span class="math inline">\(4D^2=16{,}384\)</span>。R 中可直接核对：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>mha <span class="ot">&lt;-</span> <span class="fu">nn_multihead_attention</span>(<span class="dv">64</span>, <span class="dv">8</span>, <span class="at">bias =</span> <span class="cn">TRUE</span>, <span class="at">batch_first =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="fu">sum</span>(<span class="fu">vapply</span>(mha<span class="sc">$</span>parameters, <span class="cf">function</span>(p) p<span class="sc">$</span><span class="fu">numel</span>(), <span class="fu">integer</span>(<span class="dv">1</span>)))  <span class="co"># 16640</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（b）头拆分的形状。</p>
+<pre class="text"><code>Q: [B,T,D]
+Q$view(c(B,T,h,d_h)):        [B,T,h,d_h]
+Q$transpose(2,3):            [B,h,T,d_h]
+K$transpose(3,4):            [B,h,d_h,S]
+scores = Q %*% K^T:          [B,h,T,S]
+softmax(dim=4):              [B,h,T,S]
+context = weights %*% V:     [B,h,T,d_h]
+context$transpose(2,3):      [B,T,h,d_h]
+context$contiguous()$view:   [B,T,D]</code></pre>
+<p><code>transpose()</code> 只交换 stride，不复制数据，所以转置后的张量通常不是连续存储的；<code>view()</code> 要求底层内存连续，否则会报错或得到错误的元素顺序。<code>contiguous()</code> 先按当前逻辑顺序复制成连续内存，再 <code>view</code> 成 <span class="math inline">\([B,T,D]\)</span>。书中在 <code>transpose(2,3)</code> 后调用 <code>contiguous()</code>，就是为了安全地拼接各头。</p>
+<p>（c）多头是否增加参数。</p>
+<p>不会。无论 <span class="math inline">\(h=1\)</span> 还是 <span class="math inline">\(h=8\)</span>，<span class="math inline">\(Q,K,V\)</span> 的投影合计都是 <span class="math inline">\(3D^2\)</span>（加偏置 <span class="math inline">\(3D\)</span>），输出投影是 <span class="math inline">\(D^2+D\)</span>。多头只是把同一个 <span class="math inline">\(D\)</span> 维空间切成 <span class="math inline">\(h\)</span> 个 <span class="math inline">\(d_h\)</span> 维子空间，让每个头独立计算注意力，再把结果拼回来。它增加的是注意力矩阵的数量（<span class="math inline">\(h\)</span> 个 <span class="math inline">\(T\times S\)</span> 矩阵）和 softmax 的调用次数，不是投影参数量。</p>
+<p>若 <span class="math inline">\(D\)</span> 不能被 <span class="math inline">\(h\)</span> 整除，<code>d_h = D/h</code> 不是整数，<code>view(c(B,T,h,d_h))</code> 无法把 <span class="math inline">\(D\)</span> 个元素平均分给 <span class="math inline">\(h\)</span> 个头，书中因此用 <code>stop("embed_dim 必须能被 num_heads 整除！")</code> 提前检查。</p>
+<p>（d）编码器层的参数。</p>
+<p><span class="math inline">\(D=64\)</span>、<code>nhead=4</code>、<code>dim_feedforward=256</code>：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">子层</th>
+<th style="text-align: left;">计算</th>
+<th style="text-align: right;">数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">多头注意力</td>
+<td style="text-align: left;"><span class="math inline">\(4(D^2+D)=4(64^2+64)\)</span></td>
+<td style="text-align: right;">16,640</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">FFN 第一层 <span class="math inline">\(64\to256\)</span></td>
+<td style="text-align: left;"><span class="math inline">\(64\cdot256+256\)</span></td>
+<td style="text-align: right;">16,640</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">FFN 第二层 <span class="math inline">\(256\to64\)</span></td>
+<td style="text-align: left;"><span class="math inline">\(256\cdot64+64\)</span></td>
+<td style="text-align: right;">16,448</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">两个 LayerNorm</td>
+<td style="text-align: left;"><span class="math inline">\(2\times(2D)=4D\)</span></td>
+<td style="text-align: right;">256</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">合计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">49,984</td>
+</tr>
+</tbody>
+</table>
+<p>注意 FFN 两层的偏置不对称：第一层输出 256 维，偏置 256 个；第二层输出 64 维，偏置 64 个。因此 FFN 是 <span class="math inline">\(2D\cdot d_{ff}+d_{ff}+D\)</span>，不是简单的 <span class="math inline">\(2(D^2+D)\)</span>，除非 <span class="math inline">\(d_{ff}=D\)</span>。</p>
+<p>若 <span class="math inline">\(D=256\)</span>、<span class="math inline">\(d_{ff}=256\)</span>（书中 GPT 的配置）：</p>
+<p><span class="math display">\[
+\underbrace{4(256^2+256)}_{263{,}168}
++\underbrace{2(256\cdot256)+256+256}_{131{,}584}
++\underbrace{4\cdot256}_{1{,}024}
+=395{,}776.
+\]</span></p>
+<p>若采用常见的 <span class="math inline">\(d_{ff}=4D=1024\)</span>：</p>
+<p><span class="math display">\[
+\text{FFN}=2\cdot256\cdot1024+1024+256=525{,}568,
+\]</span></p>
+<p>整层为 <span class="math inline">\(263{,}168+525{,}568+1{,}024=789{,}760\)</span>。这也解释了为什么标准 Transformer 的 FFN 往往占每层参数的一半以上，而书中把 <span class="math inline">\(d_{ff}\)</span> 硬编码成 256 后，FFN 与注意力的参数量几乎相同。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-3位置编码与置换等变性" class="level3">
+<h3 class="anchored" data-anchor-id="练习-3位置编码与置换等变性">练习 3：位置编码与置换等变性</h3>
+<p>纯自注意力对输入的顺序是“无感”的：如果打乱序列中的 token，输出只会跟着做同样的置换。请回答：</p>
+<ul>
+<li>（a） 设 <span class="math inline">\(P\)</span> 是置换矩阵。证明（或说明）<span class="math inline">\(\operatorname{Attention}(PX,PX,PX)=P\operatorname{Attention}(X,X,X)\)</span>。用 R 构造一个 <span class="math inline">\(6\times8\)</span> 的随机序列和置换，验证最大绝对误差。</li>
+<li>（b） 为什么这种置换等变性对语言、时间序列是个问题？位置编码注入后，等变性为什么会被打破？</li>
+<li>（c） 比较“把位置编码加到 token 表示上”和“把位置编码与 token 表示拼接后再投影”。写出形状、参数量和各自的优缺点。</li>
+<li>（d） 正弦位置编码和可学习位置编码的公式/参数量有何不同？书中 GPT 的 <code>max_len=32</code>、<code>D=256</code>，可学习位置编码有多少参数？如果推理时序列超过 <code>max_len</code> 会怎样？</li>
+<li>（e） 书中 <code>FullTransformer</code> 用 <code>torch_arange(1, seq_len)</code> 生成位置，而不是从 0 开始。为什么？如果改成从 0 开始，<code>nn_embedding(max_len)</code> 还能正常工作吗？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 3 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）置换等变性。</p>
+<p>设 <span class="math inline">\(P\)</span> 是 <span class="math inline">\(T\times T\)</span> 的置换矩阵，<span class="math inline">\(PX\)</span> 表示按 <span class="math inline">\(P\)</span> 重排序列。则</p>
+<p><span class="math display">\[
+(PX)(PX)^\top=PXX^\top P^\top.
+\]</span></p>
+<p>对矩阵的每一行做 softmax，等价于先 softmax 再按行置换：</p>
+<p><span class="math display">\[
+\operatorname{softmax}_{\text{row}}(PXX^\top P^\top)
+=P\operatorname{softmax}_{\text{row}}(XX^\top)P^\top.
+\]</span></p>
+<p>最后乘以 <span class="math inline">\(PV\)</span>：</p>
+<p><span class="math display">\[
+P\operatorname{softmax}(XX^\top)P^\top PV
+=P\operatorname{softmax}(XX^\top)V.
+\]</span></p>
+<p>所以输出确实跟着 <span class="math inline">\(P\)</span> 置换。R 验证（<code>torch_manual_seed(1)</code>）：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>Att <span class="ot">&lt;-</span> <span class="cf">function</span>(x) {</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  d <span class="ot">&lt;-</span> x<span class="sc">$</span><span class="fu">size</span>(<span class="dv">3</span>)</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  w <span class="ot">&lt;-</span> <span class="fu">nnf_softmax</span>(<span class="fu">torch_matmul</span>(x, x<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">2</span>, <span class="dv">3</span>)) <span class="sc">/</span> <span class="fu">sqrt</span>(d), <span class="at">dim =</span> <span class="sc">-</span><span class="dv">1</span>)</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">torch_matmul</span>(w, x)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">1</span>, <span class="dv">6</span>, <span class="dv">8</span>)</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>perm <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(<span class="dv">3</span>L, <span class="dv">1</span>L, <span class="dv">5</span>L, <span class="dv">2</span>L, <span class="dv">6</span>L, <span class="dv">4</span>L))</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>y <span class="ot">&lt;-</span> <span class="fu">Att</span>(x)</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>y_perm <span class="ot">&lt;-</span> <span class="fu">Att</span>(x[, perm, ])</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>((y[, perm, ] <span class="sc">-</span> y_perm)<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>())</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="co"># 约 2.4e-7（float32 舍入误差，可视为 0）</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（b）为什么需要位置编码。</p>
+<p>如果没有位置编码，“狗咬人”和“人咬狗”对自注意力来说是同一个集合，只是 token 的顺序不同；模型无法区分主语和宾语，也无法区分“昨天”“今天”“明天”。位置编码把“第几个位置”变成输入的一部分，打破置换等变性。对时间序列，位置还承载了趋势、周期和滞后关系，缺少位置信息会直接损失预测能力。</p>
+<p>（c）加法 vs 拼接。</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">方式</th>
+<th style="text-align: left;">形状</th>
+<th style="text-align: left;">额外参数</th>
+<th style="text-align: left;">特点</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">加法 <span class="math inline">\(X+PE\)</span></td>
+<td style="text-align: left;"><span class="math inline">\([B,T,D]\)</span></td>
+<td style="text-align: left;">位置编码本身的参数（若可学习）</td>
+<td style="text-align: left;">简单、便宜；位置与内容共享同一子空间，可能相互干扰</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">拼接 <span class="math inline">\([X;PE]\)</span> 再投影</td>
+<td style="text-align: left;"><span class="math inline">\([B,T,D+D_p]\to[B,T,D]\)</span></td>
+<td style="text-align: left;">投影矩阵 <span class="math inline">\(D(D+D_p)+D\)</span></td>
+<td style="text-align: left;">位置与内容有独立维度；多一个投影层，计算和参数更多</td>
+</tr>
+</tbody>
+</table>
+<p>书中采用加法：<code>x_emb + pos_embeddings</code>。这是 Transformer 原论文和 GPT 的常见做法。拼接在部分模型（如某些语音/视觉模型）中也会出现，但没有统一优劣，关键看位置信息与内容是否需要分离。</p>
+<p>（d）正弦 vs 可学习。</p>
+<p>正弦编码对位置 <span class="math inline">\(pos\)</span> 和维度索引 <span class="math inline">\(i\)</span>：</p>
+<p><span class="math display">\[
+PE(pos,2i)=\sin\left(\frac{pos}{10000^{2i/D}}\right),\qquad
+PE(pos,2i+1)=\cos\left(\frac{pos}{10000^{2i/D}}\right).
+\]</span></p>
+<p>它没有可学习参数，理论上可以计算任意长的位置；不同频率的波长让模型能表示相对位移。可学习位置编码是一张 <span class="math inline">\([max\_len,D]\)</span> 的表：</p>
+<p><span class="math display">\[
+\text{params}=max\_len\times D=32\times256=8{,}192.
+\]</span></p>
+<p>它更灵活，但只能索引 <span class="math inline">\(1,\dots,max\_len\)</span>；推理时若序列长度超过 <code>max_len</code>，<code>nn_embedding</code> 会越界报错（或需要截断/插值/扩展表）。书中 <code>suggest_next</code> 用滑动窗口把上下文截到最近 32 个 token，就是为了不超过这个上限。</p>
+<p>（e）为什么从 1 开始。</p>
+<p>R torch 的 <code>nn_embedding</code> 采用 1-based 索引：索引 1 对应权重矩阵的第 1 行，索引 0 不是合法行（这一点与 Python PyTorch 的 0-based 约定不同）。因此 <code>torch_arange(1, seq_len)</code> 产生的位置 <span class="math inline">\(1,\dots,seq\_len\)</span> 正好覆盖 <code>nn_embedding(max_len)</code> 的前 <span class="math inline">\(seq\_len\)</span> 行。若改成从 0 开始，位置 0 会越界；若确实要用 0-based 位置，需要把 embedding 的行数设为 <code>max_len+1</code>，或把索引整体加 1。</p>
+<p>补充：加法位置编码确实打破等变性。 如果只打乱 <span class="math inline">\(X\)</span> 而保持位置编码 <span class="math inline">\(PE\)</span> 不变，输出不会跟着同样置换。用固定 <code>pe</code> 重跑上面的实验，<code>(y2[, perm, ] - Att(x[, perm, ] + pe))</code> 的最大差约为 4.38，而不是 <span class="math inline">\(10^{-7}\)</span>。这正是位置编码起作用的证据。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="二编程实践" class="level2">
+<h2 class="anchored" data-anchor-id="二编程实践">二、编程实践</h2>
+<section id="练习-4手写多头注意力并与-nn_multihead_attention-对齐" class="level3">
+<h3 class="anchored" data-anchor-id="练习-4手写多头注意力并与-nn_multihead_attention-对齐">练习 4：手写多头注意力并与 <code>nn_multihead_attention</code> 对齐</h3>
+<p>本练习的目标不是“能跑”，而是逐元素对齐：用四个独立的 <code>nn_linear</code> 手写多头注意力，把原生模块的权重拷贝进去，验证两者的输出完全一致。</p>
+<ul>
+<li>（a） 补全下面的 <code>ManualMHA</code>，要求支持 <code>bias = TRUE/FALSE</code>，并返回输出张量。</li>
+<li>（b） 取 <span class="math inline">\(D=16,h=4,B=2,T=5\)</span>，从 <code>nn_multihead_attention(embed_dim=16, num_heads=4, bias=TRUE, batch_first=TRUE)</code> 拷贝 <code>in_proj_weight</code>、<code>in_proj_bias</code> 和 <code>out_proj</code>，比较两者输出的最大绝对误差。</li>
+<li>（c） 用 <code>need_weights = TRUE, avg_weights = FALSE</code> 打印原生模块的注意力权重形状；检查每个头的每一行权重之和是否为 1。</li>
+<li>（d） 解释为什么原生模块把 <span class="math inline">\(Q,K,V\)</span> 的投影合并成一个 <span class="math inline">\([3D,D]\)</span> 的 <code>in_proj_weight</code>，而不是三个独立的 <code>nn_linear</code>。两种写法在数学上等价吗？在计算效率上有什么差别？</li>
+<li>（e） 若 <code>bias = FALSE</code>，权重拷贝代码要改哪里？预期误差是多少？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 4 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）手写实现。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>ManualMHA <span class="ot">&lt;-</span> <span class="fu">nn_module</span>(</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  <span class="st">"ManualMHA"</span>,</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">initialize =</span> <span class="cf">function</span>(D, H, <span class="at">bias =</span> <span class="cn">TRUE</span>) {</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>D <span class="ot">&lt;-</span> D</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>H <span class="ot">&lt;-</span> H</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>dh <span class="ot">&lt;-</span> D <span class="sc">/</span> H</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>Wq <span class="ot">&lt;-</span> <span class="fu">nn_linear</span>(D, D, <span class="at">bias =</span> bias)</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>Wk <span class="ot">&lt;-</span> <span class="fu">nn_linear</span>(D, D, <span class="at">bias =</span> bias)</span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>Wv <span class="ot">&lt;-</span> <span class="fu">nn_linear</span>(D, D, <span class="at">bias =</span> bias)</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>Wo <span class="ot">&lt;-</span> <span class="fu">nn_linear</span>(D, D, <span class="at">bias =</span> bias)</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a>  },</span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a>  <span class="at">forward =</span> <span class="cf">function</span>(x) {</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>    B <span class="ot">&lt;-</span> x<span class="sc">$</span><span class="fu">size</span>(<span class="dv">1</span>)</span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>    T <span class="ot">&lt;-</span> x<span class="sc">$</span><span class="fu">size</span>(<span class="dv">2</span>)</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>    q <span class="ot">&lt;-</span> self<span class="sc">$</span><span class="fu">Wq</span>(x)</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>    k <span class="ot">&lt;-</span> self<span class="sc">$</span><span class="fu">Wk</span>(x)</span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    v <span class="ot">&lt;-</span> self<span class="sc">$</span><span class="fu">Wv</span>(x)</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>    q <span class="ot">&lt;-</span> q<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, T, self<span class="sc">$</span>H, self<span class="sc">$</span>dh))<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">2</span>, <span class="dv">3</span>)</span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>    k <span class="ot">&lt;-</span> k<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, T, self<span class="sc">$</span>H, self<span class="sc">$</span>dh))<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">2</span>, <span class="dv">3</span>)</span>
+<span id="cb5-22"><a href="#cb5-22" aria-hidden="true" tabindex="-1"></a>    v <span class="ot">&lt;-</span> v<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, T, self<span class="sc">$</span>H, self<span class="sc">$</span>dh))<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">2</span>, <span class="dv">3</span>)</span>
+<span id="cb5-23"><a href="#cb5-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-24"><a href="#cb5-24" aria-hidden="true" tabindex="-1"></a>    scores <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(q, k<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">3</span>, <span class="dv">4</span>)) <span class="sc">/</span> <span class="fu">sqrt</span>(self<span class="sc">$</span>dh)</span>
+<span id="cb5-25"><a href="#cb5-25" aria-hidden="true" tabindex="-1"></a>    weights <span class="ot">&lt;-</span> <span class="fu">nnf_softmax</span>(scores, <span class="at">dim =</span> <span class="dv">4</span>)</span>
+<span id="cb5-26"><a href="#cb5-26" aria-hidden="true" tabindex="-1"></a>    context <span class="ot">&lt;-</span> <span class="fu">torch_matmul</span>(weights, v)</span>
+<span id="cb5-27"><a href="#cb5-27" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-28"><a href="#cb5-28" aria-hidden="true" tabindex="-1"></a>    context <span class="ot">&lt;-</span> context<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">2</span>, <span class="dv">3</span>)<span class="sc">$</span><span class="fu">contiguous</span>()<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(B, T, self<span class="sc">$</span>D))</span>
+<span id="cb5-29"><a href="#cb5-29" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span><span class="fu">Wo</span>(context)</span>
+<span id="cb5-30"><a href="#cb5-30" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb5-31"><a href="#cb5-31" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（b）权重拷贝与对齐。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_manual_seed</span>(<span class="dv">1</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>D <span class="ot">&lt;-</span> <span class="dv">16</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>H <span class="ot">&lt;-</span> <span class="dv">4</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>B <span class="ot">&lt;-</span> <span class="dv">2</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>T <span class="ot">&lt;-</span> <span class="dv">5</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(B, T, D)</span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>native <span class="ot">&lt;-</span> <span class="fu">nn_multihead_attention</span>(</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">embed_dim =</span> D, <span class="at">num_heads =</span> H, <span class="at">bias =</span> <span class="cn">TRUE</span>, <span class="at">batch_first =</span> <span class="cn">TRUE</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a>manual <span class="ot">&lt;-</span> <span class="fu">ManualMHA</span>(D, H, <span class="at">bias =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="fu">with_no_grad</span>({</span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>  W <span class="ot">&lt;-</span> native<span class="sc">$</span>in_proj_weight       <span class="co"># [3D, D]</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>  b <span class="ot">&lt;-</span> native<span class="sc">$</span>in_proj_bias         <span class="co"># [3D]</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wq<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(W[<span class="dv">1</span><span class="sc">:</span>D, ])</span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wq<span class="sc">$</span>bias<span class="sc">$</span><span class="fu">copy_</span>(b[<span class="dv">1</span><span class="sc">:</span>D])</span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wk<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(W[(D <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(<span class="dv">2</span> <span class="sc">*</span> D), ])</span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wk<span class="sc">$</span>bias<span class="sc">$</span><span class="fu">copy_</span>(b[(D <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(<span class="dv">2</span> <span class="sc">*</span> D)])</span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wv<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(W[(<span class="dv">2</span> <span class="sc">*</span> D <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(<span class="dv">3</span> <span class="sc">*</span> D), ])</span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wv<span class="sc">$</span>bias<span class="sc">$</span><span class="fu">copy_</span>(b[(<span class="dv">2</span> <span class="sc">*</span> D <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(<span class="dv">3</span> <span class="sc">*</span> D)])</span>
+<span id="cb6-25"><a href="#cb6-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-26"><a href="#cb6-26" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wo<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(native<span class="sc">$</span>out_proj<span class="sc">$</span>weight)</span>
+<span id="cb6-27"><a href="#cb6-27" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wo<span class="sc">$</span>bias<span class="sc">$</span><span class="fu">copy_</span>(native<span class="sc">$</span>out_proj<span class="sc">$</span>bias)</span>
+<span id="cb6-28"><a href="#cb6-28" aria-hidden="true" tabindex="-1"></a>})</span>
+<span id="cb6-29"><a href="#cb6-29" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-30"><a href="#cb6-30" aria-hidden="true" tabindex="-1"></a>out_native <span class="ot">&lt;-</span> <span class="fu">native</span>(x, x, x)[[<span class="dv">1</span>]]</span>
+<span id="cb6-31"><a href="#cb6-31" aria-hidden="true" tabindex="-1"></a>out_manual <span class="ot">&lt;-</span> <span class="fu">manual</span>(x)</span>
+<span id="cb6-32"><a href="#cb6-32" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-33"><a href="#cb6-33" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"native:"</span>, <span class="fu">paste</span>(out_native<span class="sc">$</span>shape, <span class="at">collapse =</span> <span class="st">"x"</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb6-34"><a href="#cb6-34" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"manual:"</span>, <span class="fu">paste</span>(out_manual<span class="sc">$</span>shape, <span class="at">collapse =</span> <span class="st">"x"</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb6-35"><a href="#cb6-35" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"max diff:"</span>, <span class="fu">as.numeric</span>((out_native <span class="sc">-</span> out_manual)<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>()), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>参考输出：</p>
+<pre class="text"><code>native: 2x5x16
+manual: 2x5x16
+max diff: 0</code></pre>
+<p>误差为 0 说明两件事：第一，<code>in_proj_weight</code> 的行按 <span class="math inline">\([W_Q;W_K;W_V]\)</span> 排列；第二，手写版的 <code>view -&gt; transpose -&gt; softmax -&gt; transpose -&gt; contiguous -&gt; view</code> 与原生实现完全一致。</p>
+<p>（c）注意力权重。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>res <span class="ot">&lt;-</span> <span class="fu">native</span>(x, x, x, <span class="at">need_weights =</span> <span class="cn">TRUE</span>, <span class="at">avg_weights =</span> <span class="cn">FALSE</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"weights:"</span>, <span class="fu">paste</span>(res[[<span class="dv">2</span>]]<span class="sc">$</span>shape, <span class="at">collapse =</span> <span class="st">"x"</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="co"># 2x4x5x5</span></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sum</span>(res[[<span class="dv">2</span>]][<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">1</span>, ])  <span class="co"># 1</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>avg_weights = FALSE</code> 时返回每个头的权重，形状 <span class="math inline">\([B,h,T,T]\)</span>；默认 <code>avg_weights = TRUE</code> 时会把头平均掉，返回 <span class="math inline">\([B,T,T]\)</span>。每一行经过 softmax，和应为 1（float32 下可能略有舍入）。</p>
+<p>（d）合并投影的等价性与效率。</p>
+<p>数学上，</p>
+<p><span class="math display">\[
+Q=XW_Q,\quad K=XW_K,\quad V=XW_V
+\]</span></p>
+<p>等价于先拼接权重</p>
+<p><span class="math display">\[
+W_{QKV}=\begin{bmatrix}W_Q\\W_K\\W_V\end{bmatrix}\in\mathbb{R}^{3D\times D},
+\]</span></p>
+<p>再做一次矩阵乘法 <span class="math inline">\(XW_{QKV}\)</span>，然后把结果的最后维切成三段。原生模块正是这样存储的：<code>in_proj_weight</code> 的前 <span class="math inline">\(D\)</span> 行是 <span class="math inline">\(W_Q\)</span>，中间 <span class="math inline">\(D\)</span> 行是 <span class="math inline">\(W_K\)</span>，最后 <span class="math inline">\(D\)</span> 行是 <span class="math inline">\(W_V\)</span>。</p>
+<p>工程上，一次 <span class="math inline">\([B T,D]\times[D,3D]\)</span> 的矩阵乘法比三次独立的 <span class="math inline">\([B T,D]\times[D,D]\)</span> 更容易并行、内存访问更连续；但两者的浮点运算量和参数量相同。手写版用三个 <code>nn_linear</code> 更直观，便于分别初始化或加不同的正则；原生版更适合生产。</p>
+<p>（e）无偏置时。</p>
+<p><code>bias = FALSE</code> 时，<code>native$in_proj_bias</code> 为 <code>NULL</code>，<code>manual$Wq$bias</code> 等也为 <code>NULL</code>。拷贝代码只需保留四个 <code>weight$copy_()</code>，删掉所有 <code>bias$copy_()</code>：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">with_no_grad</span>({</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>  W <span class="ot">&lt;-</span> native<span class="sc">$</span>in_proj_weight</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wq<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(W[<span class="dv">1</span><span class="sc">:</span>D, ])</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wk<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(W[(D <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(<span class="dv">2</span> <span class="sc">*</span> D), ])</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wv<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(W[(<span class="dv">2</span> <span class="sc">*</span> D <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(<span class="dv">3</span> <span class="sc">*</span> D), ])</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a>  manual<span class="sc">$</span>Wo<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(native<span class="sc">$</span>out_proj<span class="sc">$</span>weight)</span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>预期最大误差仍为 0（或 float32 舍入级别的 <span class="math inline">\(10^{-7}\)</span>）。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-5因果掩码下一词对齐与温度采样" class="level3">
+<h3 class="anchored" data-anchor-id="练习-5因果掩码下一词对齐与温度采样">练习 5：因果掩码、下一词对齐与温度采样</h3>
+<p>GPT 训练时把整句话一次性喂给模型，但第 <span class="math inline">\(t\)</span> 个位置只能看到 <span class="math inline">\(1,\dots,t\)</span>，不能偷看未来。推理时又要按“前 <span class="math inline">\(n\)</span> 个词预测第 <span class="math inline">\(n+1\)</span> 个词”的方式逐词生成。</p>
+<ul>
+<li>（a） 用 <code>torch_full(c(L,L), -Inf)</code> 和 <code>torch_triu(..., diagonal = 1)</code> 构造 <span class="math inline">\(L=5\)</span> 的因果掩码，打印矩阵。哪些位置是 0，哪些是 <span class="math inline">\(-\infty\)</span>？为什么 0 表示“允许”、<span class="math inline">\(-\infty\)</span> 表示“屏蔽”？</li>
+<li>（b） 用 <code>nn_multihead_attention</code> 做实验：固定前 5 个 token，只修改最后一个 token，比较第 1 个位置的输出。分别在不传掩码和传入上面的掩码时计算最大绝对差。解释结果。</li>
+<li>（c） 设 <code>full_seq = c(10,20,30,40,1)</code>（这里 <code>1</code> 是 <code>&lt;PAD&gt;</code>，符合 R torch 的 1-based 索引）、<code>max_len = 4</code>。写出输入 <code>x</code> 和目标 <code>y</code>，并解释为什么第 <span class="math inline">\(t\)</span> 个位置的 logits 对应 <code>y[t]</code>。<code>ignore_index = pad_idx</code> 在这里起什么作用？</li>
+<li>（d） 对 logits <span class="math inline">\(z=(2,1,0)\)</span>，分别计算 <span class="math inline">\(T=0.5,1,2\)</span> 时的 softmax 概率。说明 <span class="math inline">\(T\to0\)</span> 和 <span class="math inline">\(T\to\infty\)</span> 的极限；为什么 <span class="math inline">\(T&gt;0\)</span> 时温度不改变 argmax？<code>torch_multinomial</code> 和 <code>torch_argmax</code> 的区别是什么？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 5 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-5" class="callout-5-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）因果掩码。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>L <span class="ot">&lt;-</span> <span class="dv">5</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>mask <span class="ot">&lt;-</span> <span class="fu">torch_full</span>(<span class="fu">c</span>(L, L), <span class="sc">-</span><span class="cn">Inf</span>)</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>mask <span class="ot">&lt;-</span> <span class="fu">torch_triu</span>(mask, <span class="at">diagonal =</span> <span class="dv">1</span>)</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(mask)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>输出：</p>
+<pre class="text"><code>      [,1]  [,2]  [,3]  [,4]  [,5]
+[1,]     0  -Inf  -Inf  -Inf  -Inf
+[2,]     0     0  -Inf  -Inf  -Inf
+[3,]     0     0     0  -Inf  -Inf
+[4,]     0     0     0     0  -Inf
+[5,]     0     0     0     0     0</code></pre>
+<p><code>scores + mask</code> 后，上三角（严格高于对角线）的分数变成 <span class="math inline">\(-\infty\)</span>，softmax 后权重为 0；下三角和对角线保持原分数，表示“第 <span class="math inline">\(i\)</span> 个位置可以看 <span class="math inline">\(1,\dots,i\)</span>”。<code>diagonal = 1</code> 保留主对角线，因此每个位置能看到自己；若写成 <code>diagonal = 0</code>，连自己也会被屏蔽，通常不是因果语言模型想要的。</p>
+<p>（b）掩码是否真的阻止了未来信息。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_manual_seed</span>(<span class="dv">1</span>)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">1</span>, <span class="dv">6</span>, <span class="dv">8</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>x2 <span class="ot">&lt;-</span> x<span class="sc">$</span><span class="fu">clone</span>()</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>x2[<span class="dv">1</span>, <span class="dv">6</span>, ] <span class="ot">&lt;-</span> x2[<span class="dv">1</span>, <span class="dv">6</span>, ] <span class="sc">+</span> <span class="dv">10</span>   <span class="co"># 只改最后一个 token</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>mha <span class="ot">&lt;-</span> <span class="fu">nn_multihead_attention</span>(<span class="dv">8</span>, <span class="dv">2</span>, <span class="at">dropout =</span> <span class="dv">0</span>, <span class="at">batch_first =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>mask <span class="ot">&lt;-</span> <span class="fu">torch_triu</span>(<span class="fu">torch_full</span>(<span class="fu">c</span>(<span class="dv">6</span>, <span class="dv">6</span>), <span class="sc">-</span><span class="cn">Inf</span>), <span class="at">diagonal =</span> <span class="dv">1</span>)</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>o1 <span class="ot">&lt;-</span> <span class="fu">mha</span>(x, x, x)[[<span class="dv">1</span>]]</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>o2 <span class="ot">&lt;-</span> <span class="fu">mha</span>(x2, x2, x2)[[<span class="dv">1</span>]]</span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"no mask, pos 1 diff:"</span>,</span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>    <span class="fu">as.numeric</span>((o1[<span class="dv">1</span>, <span class="dv">1</span>, ] <span class="sc">-</span> o2[<span class="dv">1</span>, <span class="dv">1</span>, ])<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>()), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>o1m <span class="ot">&lt;-</span> <span class="fu">mha</span>(x, x, x, <span class="at">attn_mask =</span> mask)[[<span class="dv">1</span>]]</span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>o2m <span class="ot">&lt;-</span> <span class="fu">mha</span>(x2, x2, x2, <span class="at">attn_mask =</span> mask)[[<span class="dv">1</span>]]</span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"with mask, pos 1 diff:"</span>,</span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>    <span class="fu">as.numeric</span>((o1m[<span class="dv">1</span>, <span class="dv">1</span>, ] <span class="sc">-</span> o2m[<span class="dv">1</span>, <span class="dv">1</span>, ])<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>()), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"with mask, pos 6 diff:"</span>,</span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>    <span class="fu">as.numeric</span>((o1m[<span class="dv">1</span>, <span class="dv">6</span>, ] <span class="sc">-</span> o2m[<span class="dv">1</span>, <span class="dv">6</span>, ])<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>()), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>定性结果：不传掩码时，第 1 个位置也能通过自注意力“看到”最后一个 token，修改它会让第 1 个位置输出变化（固定种子下差值约 <span class="math inline">\(0.28\)</span>）；传入因果掩码后，第 1 个位置只能看到自己，差值严格为 0；而第 6 个位置本来就能看到最后一个 token，所以差值仍然非零（固定种子下约 <span class="math inline">\(6.45\)</span>）。这说明掩码的方向和 <code>diagonal</code> 都正确。</p>
+<p>（c）下一词对齐。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>full_seq <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">10</span>, <span class="dv">20</span>, <span class="dv">30</span>, <span class="dv">40</span>, <span class="dv">1</span>)</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>max_l <span class="ot">&lt;-</span> <span class="dv">4</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> full_seq[<span class="dv">1</span><span class="sc">:</span>max_l]        <span class="co"># 10 20 30 40</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>y <span class="ot">&lt;-</span> full_seq[<span class="dv">2</span><span class="sc">:</span>(max_l <span class="sc">+</span> <span class="dv">1</span>)]  <span class="co"># 20 30 40  1</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>模型输入 <code>x</code>，输出每个位置的 logits。第 1 个位置的 logits 在看过 <code>10</code> 后预测 <code>20</code>；第 2 个位置的 logits 在看过 <code>10,20</code> 后预测 <code>30</code>；依此类推。训练时把 logits 的形状整理成 <span class="math inline">\([B,Vocab,Seq]\)</span>，交叉熵在 <code>Seq</code> 维上逐位置计算，<code>y</code> 就是每个位置的正确下一个 token。</p>
+<p><code>ignore_index = pad_idx</code> 让填充位置的损失不参与平均。否则模型会被大量 <code>&lt;PAD&gt;</code> 目标主导，学成“永远预测 padding”。注意：<code>ignore_index</code> 只忽略目标为 <code>pad_idx</code> 的位置，不会自动忽略输入中的 padding；输入侧的 mask 仍需单独处理。</p>
+<p>（d）温度 softmax。</p>
+<p>对 <span class="math inline">\(z=(2,1,0)\)</span>：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: right;">温度 <span class="math inline">\(T\)</span></th>
+<th style="text-align: left;">softmax 概率</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">0.5</td>
+<td style="text-align: left;"><code>0.866813, 0.117310, 0.015876</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">1.0</td>
+<td style="text-align: left;"><code>0.665241, 0.244728, 0.090031</code></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">2.0</td>
+<td style="text-align: left;"><code>0.506480, 0.307196, 0.186324</code></td>
+</tr>
+</tbody>
+</table>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>z <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">0</span>))</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (tt <span class="cf">in</span> <span class="fu">c</span>(<span class="fl">0.5</span>, <span class="dv">1</span>, <span class="dv">2</span>)) {</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">print</span>(<span class="fu">nnf_softmax</span>(z <span class="sc">/</span> tt, <span class="at">dim =</span> <span class="sc">-</span><span class="dv">1</span>))</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>当 <span class="math inline">\(T\to0^+\)</span>，<span class="math inline">\(z_i/T\)</span> 的差距被放大，最大项的概率趋于 1，其余趋于 0，接近贪婪；当 <span class="math inline">\(T\to\infty\)</span>，所有 <span class="math inline">\(z_i/T\to0\)</span>，概率趋于均匀分布 <span class="math inline">\(1/3\)</span>。对固定的 <span class="math inline">\(T&gt;0\)</span>，除以正数不改变大小顺序，所以 argmax 不变；温度改变的是分布的陡峭程度和采样时的随机性，不是最大概率对应的 token。</p>
+<p><code>torch_argmax</code> 是确定性地取最大 logit 的下标；<code>torch_multinomial</code> 按概率分布随机抽样，即使某个词概率较低也可能被选中。书中 <code>temp = 0.1</code> 是“接近贪婪”的采样，而不是严格的 argmax；严格贪婪应使用 <code>torch_argmax</code>，且不能把温度设为 0（会除以 0）。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-6querysuggestgpt-的参数量与-lora-节省" class="level3">
+<h3 class="anchored" data-anchor-id="练习-6querysuggestgpt-的参数量与-lora-节省">练习 6：QuerySuggestGPT 的参数量与 LoRA 节省</h3>
+<p>书中的 <code>QuerySuggestGPT</code> 配置为：<code>vocab_size = 5003</code>、<code>d_model = 256</code>、<code>nhead = 4</code>、<code>num_layers = 2</code>、<code>max_len = 32</code>、<code>dim_feedforward = 256</code>。</p>
+<ul>
+<li>（a） 计算 token embedding、position embedding、每个 Transformer 编码器层、输出头的参数量，以及总参数量。词表相关部分（token embedding + position embedding + 输出头）占比多少？</li>
+<li>（b） 对 FFN 的 <code>linear1</code>、<code>linear2</code>（每层各一个）和输出层 <code>fc_out</code> 注入 LoRA，取 <span class="math inline">\(r=8\)</span>、<code>lora_alpha=16</code>。计算每处 <span class="math inline">\(A,B\)</span> 的参数量、总可训练参数，以及可训练参数占整个模型的比例。</li>
+<li>（c） 书中打印的示例是“总参数: 4237283 | 可训练参数: 83032 | 训练比例: 1.960%”。按你上面的计算核对：哪些数字对得上、哪些对不上？<code>83032</code> 对应的是哪种注入范围？如果只按书中展示的代码（FFN + <code>fc_out</code>），正确的输出应该是什么？</li>
+<li>（d） 为什么 LoRA 把 <span class="math inline">\(B\)</span> 初始化为 0？如果 <span class="math inline">\(A,B\)</span> 都初始化为 0 会怎样？<code>merge()</code> 前后输出为什么应当一致？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 6 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）基础模型参数量。</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">组件</th>
+<th style="text-align: left;">计算</th>
+<th style="text-align: right;">参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">Token embedding</td>
+<td style="text-align: left;"><span class="math inline">\(5003\times256\)</span></td>
+<td style="text-align: right;">1,280,768</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Position embedding</td>
+<td style="text-align: left;"><span class="math inline">\(32\times256\)</span></td>
+<td style="text-align: right;">8,192</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">每层多头注意力</td>
+<td style="text-align: left;"><span class="math inline">\(4(256^2+256)\)</span></td>
+<td style="text-align: right;">263,168</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">每层 FFN</td>
+<td style="text-align: left;"><span class="math inline">\(2\cdot256\cdot256+256+256\)</span></td>
+<td style="text-align: right;">131,584</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">每层 LayerNorm ×2</td>
+<td style="text-align: left;"><span class="math inline">\(2\times(2\cdot256)\)</span></td>
+<td style="text-align: right;">1,024</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">每层小计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">395,776</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">2 层编码器</td>
+<td style="text-align: left;"><span class="math inline">\(2\times395{,}776\)</span></td>
+<td style="text-align: right;">791,552</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">输出头</td>
+<td style="text-align: left;"><span class="math inline">\(256\times5003+5003\)</span></td>
+<td style="text-align: right;">1,285,771</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">总计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">3,366,283</td>
+</tr>
+</tbody>
+</table>
+<p>词表相关部分：</p>
+<p><span class="math display">\[
+1{,}280{,}768+8{,}192+1{,}285{,}771=2{,}574{,}731,
+\]</span></p>
+<p>占</p>
+<p><span class="math display">\[
+\frac{2{,}574{,}731}{3{,}366{,}283}\approx0.7649,
+\]</span></p>
+<p>即约 76.5%，与书中“76% 用于查字典”的叙述一致。</p>
+<p>（b）LoRA 参数量。</p>
+<p>LoRA 把增量写成 <span class="math inline">\(\Delta W=BA\)</span>，其中 <span class="math inline">\(A\in\mathbb{R}^{r\times d_{in}}\)</span>，<span class="math inline">\(B\in\mathbb{R}^{d_{out}\times r}\)</span>。</p>
+<ul>
+<li>每个 <span class="math inline">\(256\to256\)</span> 的 FFN 线性层： <span class="math display">\[
+A:\ 8\times256=2{,}048,\qquad
+B:\ 256\times8=2{,}048,
+\]</span> 合计 4,096。</li>
+<li>2 层 × 每层 2 个 FFN 线性层：<span class="math inline">\(2\times2\times4{,}096=16{,}384\)</span>。</li>
+<li>输出层 <span class="math inline">\(256\to5003\)</span>： <span class="math display">\[
+A:\ 8\times256=2{,}048,\qquad
+B:\ 5003\times8=40{,}024,
+\]</span> 合计 42,072。</li>
+</ul>
+<p>总可训练参数：</p>
+<p><span class="math display">\[
+16{,}384+42{,}072=\mathbf{58{,}456}.
+\]</span></p>
+<p>模型总参数：</p>
+<p><span class="math display">\[
+3{,}366{,}283+58{,}456=3{,}424{,}739.
+\]</span></p>
+<p>可训练比例：</p>
+<p><span class="math display">\[
+\frac{58{,}456}{3{,}424{,}739}\approx0.01707=1.707\%.
+\]</span></p>
+<p>相对全量微调的 <span class="math inline">\(3{,}366{,}283\)</span> 个参数，LoRA 只训练约 <span class="math inline">\(1.736\%\)</span>，减少了约 <span class="math inline">\(98.26\%\)</span>。</p>
+<p>（c）核对书中的输出。</p>
+<p>书中示例：</p>
+<pre class="text"><code>总参数: 4237283 | 可训练参数: 83032 | 训练比例: 1.960%</code></pre>
+<p>按书中展示的注入代码（每层 <code>linear1</code>、<code>linear2</code>，再加 <code>fc_out</code>），实际应为：</p>
+<pre class="text"><code>总参数: 3424739 | 可训练参数: 58456 | 训练比例: 1.707%</code></pre>
+<p><code>83032</code> 恰好等于 <span class="math inline">\(58{,}456+24{,}576\)</span>。多出来的 24,576 是也给注意力层的 <code>in_proj</code> 和 <code>out_proj</code> 注入 LoRA 的参数：</p>
+<ul>
+<li>每层 <code>in_proj</code>（<span class="math inline">\(256\to768\)</span>）：<span class="math inline">\(A=8\times256=2{,}048\)</span>，<span class="math inline">\(B=768\times8=6{,}144\)</span>，合计 8,192；</li>
+<li>每层 <code>out_proj</code>（<span class="math inline">\(256\to256\)</span>）：4,096；</li>
+<li>每层合计 12,288，两层 24,576。</li>
+</ul>
+<p>但即使把注意力也注入，总参数是 <span class="math inline">\(3{,}366{,}283+83{,}032=3{,}449{,}315\)</span>，比例约 <span class="math inline">\(2.407\%\)</span>，仍然不是书中的 4,237,283 / 1.960%。因此这组打印值无法由书中展示的架构复现，较可能是旧版本的输出或排版时混入了别的配置。实际写作/复现时应以当前代码的 <code>print_trainable_params()</code> 结果为准；若希望书中的 83,032 成立，需要把注入范围扩展到注意力层，并同步修正总参数。</p>
+<p>（d）LoRA 初始化与合并。</p>
+<p>前向为</p>
+<p><span class="math display">\[
+h=W_0x+\frac{\alpha}{r}BAx.
+\]</span></p>
+<p>若 <span class="math inline">\(B=0\)</span>，则 <span class="math inline">\(BA=0\)</span>，初始时 <span class="math inline">\(h=W_0x\)</span>，与预训练模型完全一致，不会在第一步引入随机扰动。反向传播时，<span class="math inline">\(\partial L/\partial B\)</span> 通常非零（因为 <span class="math inline">\(Ax\neq0\)</span>），<span class="math inline">\(B\)</span> 开始更新；随后 <span class="math inline">\(A\)</span> 也会获得梯度。若 <span class="math inline">\(A=B=0\)</span>，两条路径的梯度都为 0，模型永远学不到东西——这才是必须避免的情况。标准做法是 <span class="math inline">\(A\)</span> 随机、<span class="math inline">\(B\)</span> 为零；若反过来 <span class="math inline">\(A=0\)</span>、<span class="math inline">\(B\)</span> 随机，初始输出也等于 <span class="math inline">\(W_0x\)</span>，梯度会先更新 <span class="math inline">\(A\)</span>，理论上也能训练，但不是 LoRA 的常规初始化。</p>
+<p><code>merge()</code> 计算 <span class="math inline">\(\Delta W=BA\cdot\alpha/r\)</span>，原地加到 <span class="math inline">\(W_0\)</span> 上。合并前</p>
+<p><span class="math display">\[
+h=W_0x+\frac{\alpha}{r}BAx,
+\]</span></p>
+<p>合并后</p>
+<p><span class="math display">\[
+h=(W_0+\frac{\alpha}{r}BA)x,
+\]</span></p>
+<p>两者在数学上完全相同。实测（小线性层，float32）合并前后最大误差约 <span class="math inline">\(2.4\times10^{-7}\)</span>，只是浮点舍入。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="三开放思考" class="level2">
+<h2 class="anchored" data-anchor-id="三开放思考">三、开放思考</h2>
+<section id="练习-7表格-transformercls-与注意力解释" class="level3">
+<h3 class="anchored" data-anchor-id="练习-7表格-transformercls-与注意力解释">练习 7：表格 Transformer、<code>[CLS]</code> 与注意力解释</h3>
+<p>书中的表格 Transformer 把每一列特征当作一个 token：<span class="math inline">\([B,F]\to[B,F,1]\to[B,F,D]\)</span>，再拼接 <code>[CLS]</code>，经过若干层自注意力后取第一个位置做预测。</p>
+<p>请讨论：</p>
+<ul>
+<li>（a） 为什么表格特征要用“每个特征独立的投影”，而不能像词嵌入那样共享一个线性层？<code>feature_emb</code> 的作用是什么？如果去掉它，把列的顺序打乱会怎样？</li>
+<li>（b） <code>[CLS]</code> 的输出为什么能代表整个样本？把 <code>[CLS]</code> 行的注意力权重直接当作“特征重要性”有哪些风险？请至少列出三条，并给出一种更稳健的归因方法。</li>
+<li>（c） 在 Ames 房价这种样本量约两千、特征约一百的表格任务上，Transformer 一定比 MLP 好吗？什么情况下值得用 Transformer，什么情况下树模型/MLP 更合适？</li>
+<li>（d） ALiBi 与可学习位置编码相比，外推能力为什么更强？它的偏差和代价是什么？</li>
+<li>（e） LoRA 的秩 <span class="math inline">\(r\)</span>、<code>lora_alpha</code>、注入层选择分别如何影响容量、稳定性和灾难性遗忘？如果领域差异很大，<span class="math inline">\(r\)</span> 应该调大还是调小？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 7 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）独立投影与特征身份。</p>
+<p>表格的列是异质的：面积是连续的正数，年份是时间刻度，类别编码是离散的，量纲和分布都不同。共享一个 <span class="math inline">\(D\times F\)</span> 的线性层会让所有列共用同一组权重，相当于强行假设“第 1 列和第 2 列的特征语义相同”，既不合理，也会让不同尺度的特征互相干扰。独立投影给每一列自己的 <span class="math inline">\(W_f\in\mathbb{R}^{D}\)</span> 和 <span class="math inline">\(b_f\in\mathbb{R}^{D}\)</span>，等价于</p>
+<p><span class="math display">\[
+t_f=x_f\cdot W_f+b_f,\qquad f=1,\dots,F,
+\]</span></p>
+<p>把每个标量特征映射到自己的 <span class="math inline">\(D\)</span> 维 token。</p>
+<p><code>feature_emb</code> 是形状 <span class="math inline">\([1,F,D]\)</span> 的可学习“列身份”向量。自注意力本身对 token 的排列是置换等变的：如果去掉 <code>feature_emb</code>，把输入列的顺序打乱，模型输出只会跟着置换，无法知道“当前 token 是面积还是年份”。加上 <code>feature_emb</code> 后，每个位置都有一个固定的身份编码，列的顺序（以及列的含义）才被区分开。注意：如果训练和推理时列顺序不一致，<code>feature_emb</code> 也会错位，所以表格 Transformer 对特征列顺序的稳定性有要求。</p>
+<p>（b）<code>[CLS]</code> 与注意力解释的边界。</p>
+<p><code>[CLS]</code> 是一个可学习的 token，放在序列最前面；经过多层自注意力，它和所有特征 token 交互，最后一层的 <code>[CLS]</code> 向量被视为全局表示。分类/回归头只读这个向量，因此它必须学会把对任务有用的信息汇聚进来。</p>
+<p>把 <code>[CLS]</code> 行的注意力权重当作特征重要性，至少有这些风险：</p>
+<ol type="1">
+<li>注意力不是因果贡献。 注意力权重只说明“在哪里取信息”，不说明“取到后对输出改变了多少”。一个特征可能被高度关注，但因为 Value 投影或后续 FFN 的作用，对最终预测影响很小；反之亦然。</li>
+<li>softmax 归一化与竞争效应。 同一行的权重和为 1，特征之间是零和的。两个高度相关的特征可能互相分流注意力，单个权重看起来都不大，但联合贡献很大。</li>
+<li>多层、多头与残差。 书中展示的通常只是某一层、经头平均后的矩阵；不同层/头关注不同模式，残差连接和 FFN 还会继续混合信息。单层单头权重不能代表整个模型。</li>
+<li>样本依赖性。 注意力是输入的函数，不同样本的权重不同；不能用少数样本的权重概括全局特征重要性。</li>
+</ol>
+<p>更稳健的归因方法包括：permutation importance（打乱某列看验证误差上升多少）、ablation（把某列置为均值/缺失）、gradient×input、Integrated Gradients、Shapley 值，以及 attention rollout 等多层聚合方法。它们也各有假设，最好交叉验证。</p>
+<p>（c）表格任务上的取舍。</p>
+<p>不一定。Ames 这类任务样本量约 2344、特征约 95（取决于是否删除经纬度），信噪比有限；Transformer 的参数量和灵活性都很高，若没有足够的正则、早停和调参，很容易过拟合。另一方面，Transformer 的注意力确实能自动建模特征间交互，在特征异质、交互复杂、样本量较大时可能超过 MLP。实际选择应看：</p>
+<ul>
+<li>样本量与特征数：小样本优先线性/树模型/强正则 MLP；大样本且交互复杂时再考虑 Transformer。</li>
+<li>特征类型：大量类别特征、缺失值、异构量纲时，树模型（GBDT）通常非常强；Transformer 需要仔细的 tokenizer、缺失值编码和特征身份编码。</li>
+<li>调参成本与部署：Transformer 的训练/推理成本更高，可解释性工具也更复杂。</li>
+<li>基线：至少与 MLP、GBDT、线性模型在同一个 CV 切分上比较，不能只看一次测试集 RMSE。</li>
+</ul>
+<p>书中的表格 Transformer 在特定管线下降到了更低的 RMSE，但这只是一个数据点，不足以证明“Transformer 在所有表格任务上优于 MLP”。</p>
+<p>（d）ALiBi 的外推。</p>
+<p>ALiBi 不把位置向量加到 token 上，而是直接在注意力分数上加一个与距离成正比的偏置：</p>
+<p><span class="math display">\[
+\text{score}_{ij}\leftarrow \text{score}_{ij}-m_h\cdot|i-j|,
+\]</span></p>
+<p>其中 <span class="math inline">\(m_h\)</span> 是每个头固定的斜率（书中用 <span class="math inline">\(2^{-8h/H}\)</span> 一类的几何序列）。距离越远，惩罚越大，模型被鼓励关注近邻。由于偏置是距离的连续函数，推理时序列比训练时更长也能直接计算，不需要“位置表”里不存在的行；这就是它相对可学习位置编码的外推优势。</p>
+<p>代价是强烈的局部性归纳偏置：如果任务真的需要很长距离的精确依赖，固定的距离惩罚可能限制模型；斜率的选择也需要与头数和数据匹配。ALiBi 并没有解决注意力的 <span class="math inline">\(O(T^2)\)</span> 复杂度，也没有让模型自动理解绝对位置，只是把相对距离以一种简单的方式注入。</p>
+<p>（e）LoRA 的容量与注入层。</p>
+<ul>
+<li>秩 <span class="math inline">\(r\)</span>：控制低秩更新的容量。<span class="math inline">\(r\)</span> 越大，<span class="math inline">\(A,B\)</span> 的参数越多，能表达的 <span class="math inline">\(\Delta W\)</span> 越丰富，但也更容易过拟合、显存更高。领域差异大、数据多时可以适当增大 <span class="math inline">\(r\)</span>；任务简单或数据少时 <span class="math inline">\(r=4\)</span> 或 <span class="math inline">\(8\)</span> 往往足够。</li>
+<li><code>lora_alpha</code>：缩放因子为 <span class="math inline">\(\alpha/r\)</span>。增大 <span class="math inline">\(\alpha\)</span> 会放大 LoRA 分支的有效更新，相当于提高该分支的学习率/初始步长；它不改变参数量，但会影响训练稳定性。常见做法是固定 <span class="math inline">\(\alpha\)</span> 与 <span class="math inline">\(r\)</span> 的比例，或把 <span class="math inline">\(\alpha\)</span> 当作独立超参。</li>
+<li>注入层：只注入 <code>fc_out</code> 容量很小，但可能不足以适配领域；注入 FFN 和注意力（Q/K/V/O）容量更大，也更接近原论文的默认配置。注入层越多，可训练参数越多，灾难性遗忘的风险也越高（尽管冻结主干已经大幅降低了遗忘）。</li>
+<li>灾难性遗忘：LoRA 只更新低秩增量，主干冻结，通常比全量微调更不容易遗忘；但如果 <span class="math inline">\(r\)</span> 很大、学习率很高、领域数据很窄，仍然可能把输出分布拉偏。应保留通用验证集，比较微调前后的通用能力。</li>
+</ul>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="四纠错与陷阱" class="level2">
+<h2 class="anchored" data-anchor-id="四纠错与陷阱">四、纠错与陷阱</h2>
+<section id="练习-8形状索引与初始化陷阱" class="level3">
+<h3 class="anchored" data-anchor-id="练习-8形状索引与初始化陷阱">练习 8：形状、索引与初始化陷阱</h3>
+<p>下面的代码/说法都来自本章或与之密切相关的实现细节。请逐条判断哪里会出错，并给出修正。</p>
+<ul>
+<li>（a） R torch 中 <code>torch_tensor(1:5)$unsqueeze(1)</code> 和 <code>torch_randn(32,8)$unsqueeze(1)</code> 的形状分别是什么？这与 Python PyTorch 的 <code>unsqueeze(1)</code> 有什么不同？书中 GPT 的 <code>pos &lt;- self$pos_idx[1:seq_len]$unsqueeze(1)</code> 为什么是正确的？</li>
+<li>（b） 书中 GPT 的 <code>forward()</code> 返回 <code>[B, Vocab, Seq]</code>。推理摘录里写 <code>last_logits &lt;- logits[, logits$size(2), ]</code>，然后对 <code>last_logits</code> 做 softmax 并 <code>torch_multinomial</code>。这会发生什么？正确写法是什么？配套脚本 <code>code/9_Words_Suggestion.R</code> 为什么能工作？</li>
+<li>（c） 因果掩码写成 <code>torch_triu(torch_full(c(L,L), -Inf), diagonal = 1)</code>。哪些元素是 0、哪些是 <span class="math inline">\(-\infty\)</span>？如果把 <code>diagonal</code> 改成 0 会怎样？如果忘记 <code>-Inf</code>、直接用 0 初始化会怎样？布尔掩码中 <code>TRUE</code> 表示“允许”还是“屏蔽”？</li>
+<li>（d） LoRA 中“把 <span class="math inline">\(B\)</span> 初始化为 0”是必须的吗？如果 <span class="math inline">\(A,B\)</span> 都初始化为 0 会怎样？如果 <span class="math inline">\(A=0\)</span>、<span class="math inline">\(B\)</span> 随机呢？<code>merge()</code> 前后输出为什么应当一致？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 8 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）R 与 Python 的 <code>unsqueeze</code>。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_tensor</span>(<span class="dv">1</span><span class="sc">:</span><span class="dv">5</span>)<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">1</span>)<span class="sc">$</span>shape          <span class="co"># 1 x 5</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_tensor</span>(<span class="dv">1</span><span class="sc">:</span><span class="dv">5</span>)<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">2</span>)<span class="sc">$</span>shape          <span class="co"># 5 x 1</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_randn</span>(<span class="dv">32</span>, <span class="dv">8</span>)<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">1</span>)<span class="sc">$</span>shape         <span class="co"># 1 x 32 x 8</span></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_randn</span>(<span class="dv">32</span>, <span class="dv">8</span>)<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">2</span>)<span class="sc">$</span>shape         <span class="co"># 32 x 1 x 8</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>R torch 的 <code>unsqueeze(dim)</code> 把新维度插在第 <code>dim</code> 个位置之前（1 表示最前面）；Python PyTorch 的 <code>unsqueeze(dim)</code> 使用 0-based 轴编号，<code>unsqueeze(1)</code> 是在第 1 轴之后插入。因此同一个 <code>unsqueeze(1)</code>：</p>
+<pre class="text"><code>R:        [5] -&gt; [1,5]        [32,8] -&gt; [1,32,8]
+Python:   [5] -&gt; [5,1]        [32,8] -&gt; [32,1,8]</code></pre>
+<p>书中 <code>pos_idx[1:seq_len]</code> 是长度 <code>seq_len</code> 的一维张量，<code>unsqueeze(1)</code> 得到 <code>[1, seq_len]</code>，再过 <code>nn_embedding</code> 得到 <code>[1, seq_len, D]</code>；它与 <code>[B, seq_len, D]</code> 相加时，batch 维自动广播，位置维正常对齐。这是正确的。若按 Python 习惯改成 <code>[seq_len,1]</code>，得到的 <code>[seq_len,1,D]</code> 只有在 <code>B == seq_len</code> 时才“碰巧”能广播，而且每个样本会拿到一整套位置向量，语义完全错了；<code>B != seq_len</code> 时会直接报维度不匹配。</p>
+<p>顺带一提，R torch 的 <code>nn_embedding</code> 也是 1-based 索引：<code>nn_embedding(5,3,padding_idx=1)</code> 会把第 1 行置零，输入索引 1 取第 1 行。Python 则是 0-based。这就是书中 <code>pad_idx = 1</code>、<code>torch_arange(1, max_len)</code> 能工作的原因；移植到 Python 时不能照抄这些数字。</p>
+<p>（b）logits 切片。</p>
+<p><code>logits</code> 的形状是 <span class="math inline">\([B,Vocab,Seq]\)</span>，<code>logits$size(2)</code> 是 Vocab（5003），不是时间步数。因此</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a>last_logits <span class="ot">&lt;-</span> logits[, logits<span class="sc">$</span><span class="fu">size</span>(<span class="dv">2</span>), ]</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>是在第 2 维（词表维）上取第 5003 个元素，结果形状是 <span class="math inline">\([B,Seq]\)</span>（例如 <span class="math inline">\([1,32]\)</span>）。接着 <code>nnf_softmax(last_logits, dim = -1)</code> 是在 时间维 上做 softmax，<code>torch_multinomial</code> 采样出来的是 1 到 32 之间的“时间位置”，不是词表 token。模型不会报错，但生成结果毫无意义。</p>
+<p>正确写法是取最后一个时间步、保留词表维：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb20"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a>last_logits <span class="ot">&lt;-</span> logits[, , logits<span class="sc">$</span><span class="fu">size</span>(<span class="dv">3</span>)]   <span class="co"># [B, Vocab]</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>或者先把 logits 转成 <span class="math inline">\([B,Seq,Vocab]\)</span>，再按第 2 维取最后一步：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>logits <span class="ot">&lt;-</span> logits<span class="sc">$</span><span class="fu">transpose</span>(<span class="dv">2</span>, <span class="dv">3</span>)            <span class="co"># [B, Seq, Vocab]</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a>last_logits <span class="ot">&lt;-</span> logits[, logits<span class="sc">$</span><span class="fu">size</span>(<span class="dv">2</span>), ]   <span class="co"># [B, Vocab]</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>配套脚本 <code>code/9_Words_Suggestion.R:193</code> 正是先做了 <code>logits &lt;- logits$transpose(2, 3)</code>，所以它的 <code>[, logits$size(2), ]</code> 是对的。书中推理小节的代码摘录省略了这行转置，单独照抄会得到错误结果；这是“摘录与完整脚本不一致”的典型陷阱。</p>
+<p>（c）掩码方向。</p>
+<p><code>torch_triu(..., diagonal = 1)</code> 把严格上三角设为 <span class="math inline">\(-\infty\)</span>，下三角和对角线保持 0：</p>
+<pre class="text"><code> 0  -Inf -Inf -Inf -Inf
+ 0    0  -Inf -Inf -Inf
+ 0    0    0  -Inf -Inf
+ 0    0    0    0  -Inf
+ 0    0    0    0    0</code></pre>
+<p>加到 scores 上后，<span class="math inline">\(-\infty\)</span> 的位置 softmax 权重为 0，0 的位置保持原分数。<code>diagonal = 1</code> 保留对角线，所以每个位置能看见自己；改成 <code>diagonal = 0</code> 会把对角线也设为 <span class="math inline">\(-\infty\)</span>，第 <span class="math inline">\(i\)</span> 个位置连自己都看不见，通常不是因果语言模型想要的（虽然某些特殊结构可能允许，但标准 GPT 不允许）。</p>
+<p>如果忘记 <code>-Inf</code>、用全 0 初始化，<code>torch_triu</code> 仍然是全 0，等于没有掩码，模型会偷看未来。布尔掩码的语义要小心：在 PyTorch/R torch 的 <code>nn_multihead_attention</code> 中，<code>attn_mask</code> 为布尔张量时 <code>TRUE</code> 表示屏蔽（不允许注意），<code>FALSE</code> 表示允许；这与“TRUE 表示允许”的直觉相反。最稳妥的做法是像书中一样用加性浮点掩码（0 允许、<span class="math inline">\(-\infty\)</span> 屏蔽），或者先写一个小例子验证布尔语义。</p>
+<p>（d）LoRA 初始化。</p>
+<p>标准 LoRA 初始化是 <span class="math inline">\(A\)</span> 随机、<span class="math inline">\(B=0\)</span>。这样初始 <span class="math inline">\(\Delta W=BA=0\)</span>，模型输出与预训练模型完全一致（实测最大差 0）。反向传播时：</p>
+<ul>
+<li><span class="math inline">\(\partial L/\partial B\)</span> 一般非零（因为 <span class="math inline">\(Ax\neq0\)</span>），<span class="math inline">\(B\)</span> 先更新；</li>
+<li>之后 <span class="math inline">\(A\)</span> 也会获得梯度。</li>
+</ul>
+<p>如果 <span class="math inline">\(A=B=0\)</span>，则 <span class="math inline">\(Ax=0\)</span> 且 <span class="math inline">\(B^\top(\cdot)=0\)</span>，两条路径的梯度都为 0，<span class="math inline">\(A,B\)</span> 永远不动，LoRA 完全失效。如果 <span class="math inline">\(A=0\)</span>、<span class="math inline">\(B\)</span> 随机，初始输出仍然等于 <span class="math inline">\(W_0x\)</span>，但 <span class="math inline">\(\partial L/\partial B=0\)</span>、<span class="math inline">\(\partial L/\partial A\neq0\)</span>，训练会先更新 <span class="math inline">\(A\)</span>；理论上也能走通，但不是 LoRA 的常规做法，且第一步的梯度信号较弱。</p>
+<p>所以“<span class="math inline">\(B\)</span> 必须为 0”更准确的说法是：不要让 <span class="math inline">\(A,B\)</span> 同时为 0；标准做法是 <span class="math inline">\(B=0\)</span>、<span class="math inline">\(A\)</span> 随机。<code>merge()</code> 前后输出一致，是因为它把 <span class="math inline">\(\frac{\alpha}{r}BA\)</span> 原地加到 <span class="math inline">\(W_0\)</span> 上，代数上只是把两项合并；实测 float32 误差约 <span class="math inline">\(2.4\times10^{-7}\)</span>。</p>
+</div>
+</div>
+</div>
+<hr>
+</section>
+</section>
+<section id="本章速查" class="level2">
+<h2 class="anchored" data-anchor-id="本章速查">本章速查</h2>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 50%">
+<col style="width: 50%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">主题</th>
+<th style="text-align: left;">关键结论</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">缩放点积注意力</td>
+<td style="text-align: left;">scores/weights <span class="math inline">\([B,T,S]\)</span>，输出 <span class="math inline">\([B,T,d_v]\)</span>；时间 <span class="math inline">\(O(BTSd)\)</span>，显存 <span class="math inline">\(O(BTS)\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">缩放</td>
+<td style="text-align: left;"><span class="math inline">\(\operatorname{Var}(q\cdot k)=d_k\)</span>；除以 <span class="math inline">\(\sqrt{d_k}\)</span> 后方差约为 1，避免 softmax 饱和</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">多头</td>
+<td style="text-align: left;">参数量不随头数增加；<span class="math inline">\(D\)</span> 必须能被 <span class="math inline">\(h\)</span> 整除；拼接前要 <code>contiguous()</code></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">位置编码</td>
+<td style="text-align: left;">纯自注意力置换等变；加法注入 <span class="math inline">\([B,T,D]\)</span>，可学习表参数量 <span class="math inline">\(max\_len\times D\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">因果掩码</td>
+<td style="text-align: left;">上三角 <span class="math inline">\(-\infty\)</span>、下三角含对角线 0；<code>diagonal=1</code> 保留自身</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">下一词</td>
+<td style="text-align: left;">输入 <code>x = seq[1:L]</code>，目标 <code>y = seq[2:(L+1)]</code>；输出常整理为 <span class="math inline">\([B,Vocab,Seq]\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">QuerySuggestGPT</td>
+<td style="text-align: left;">总参数 3,366,283；词表相关部分约 76.5%</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">LoRA（FFN + 输出层，<span class="math inline">\(r=8\)</span>）</td>
+<td style="text-align: left;">可训练 58,456；总参数 3,424,739；比例约 1.707%</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">温度</td>
+<td style="text-align: left;"><span class="math inline">\(p_i\propto e^{z_i/T}\)</span>；<span class="math inline">\(T\to0\)</span> 接近贪婪，<span class="math inline">\(T\to\infty\)</span> 接近均匀</td>
+</tr>
+</tbody>
+</table>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "已复制");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "已复制");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="./08-rnn-lstm-exercises.html" class="pagination-link" aria-label="08 循环网络">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">08 循环网络</span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="./10-recsys-exercises.html" class="pagination-link" aria-label="10 深度推荐模型">
+        <span class="nav-page-text">10 深度推荐模型</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

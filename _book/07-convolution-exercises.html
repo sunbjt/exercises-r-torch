@@ -1,0 +1,1800 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-Hans" xml:lang="zh-Hans"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>07 卷积网络 – 深度学习与生成式 AI：课后练习</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./08-rnn-lstm-exercises.html" rel="next">
+<link href="./06-regularization-exercises.html" rel="prev">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-c10c624cab4f32a71991352778f012ac.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "sidebar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "start",
+  "type": "textbox",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "没有结果",
+    "search-matching-documents-text": "匹配的文档",
+    "search-copy-link-title": "复制搜索链接",
+    "search-hide-matches-text": "隐藏其它匹配结果",
+    "search-more-match-text": "更多匹配结果",
+    "search-more-matches-text": "更多匹配结果",
+    "search-clear-button-title": "清除",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "取消",
+    "search-submit-button-title": "提交",
+    "search-label": "搜索"
+  }
+}</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+<link rel="stylesheet" href="theme.css">
+</head>
+
+<body class="nav-sidebar floating quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+  <nav class="quarto-secondary-nav">
+    <div class="container-fluid d-flex">
+      <button type="button" class="quarto-btn-toggle btn" data-bs-toggle="collapse" role="button" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+        <i class="bi bi-layout-text-sidebar-reverse"></i>
+      </button>
+        <nav class="quarto-page-breadcrumbs" aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="./07-convolution-exercises.html">07 卷积网络</a></li></ol></nav>
+        <a class="flex-grow-1" role="navigation" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item" aria-controls="quarto-sidebar" aria-expanded="false" aria-label="展开或折叠侧边栏导航" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">      
+        </a>
+      <button type="button" class="btn quarto-search-button" aria-label="搜索" onclick="window.quartoOpenSearch();">
+        <i class="bi bi-search"></i>
+      </button>
+    </div>
+  </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article">
+<!-- sidebar -->
+  <nav id="quarto-sidebar" class="sidebar collapse collapse-horizontal quarto-sidebar-collapse-item sidebar-navigation floating overflow-auto">
+    <div class="pt-lg-2 mt-2 text-left sidebar-header">
+    <div class="sidebar-title mb-0 py-0">
+      <a href="./">深度学习与生成式 AI：课后练习</a> 
+        <div class="sidebar-tools-main">
+  <a href="" class="quarto-reader-toggle quarto-navigation-tool px-1" onclick="window.quartoToggleReader(); return false;" title="切换阅读器模式">
+  <div class="quarto-reader-toggle-btn">
+  <i class="bi"></i>
+  </div>
+</a>
+</div>
+    </div>
+      </div>
+        <div class="mt-2 flex-shrink-0 align-items-center">
+        <div class="sidebar-search">
+        <div id="quarto-search" class="" title="搜索"></div>
+        </div>
+        </div>
+    <div class="sidebar-menu-container"> 
+    <ul class="list-unstyled mt-1">
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./index.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">使用说明</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./03-math-ml-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">03 自动微分</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./04-backforward-nn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">04 多层感知机</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./05-optimizer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">05 优化与训练动力学</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./06-regularization-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">06 工程化实验</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./07-convolution-exercises.html" class="sidebar-item-text sidebar-link active">
+ <span class="menu-text">07 卷积网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./08-rnn-lstm-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">08 循环网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./09-transformer-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">09 Transformer</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./10-recsys-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">10 深度推荐模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./11-gnn-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">11 图神经网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./12-vae-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">12 变分自编码器</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./13-GAN-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">13 生成对抗网络</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./14-diffusion-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">14 扩散模型</span></a>
+  </div>
+</li>
+        <li class="sidebar-item">
+  <div class="sidebar-item-container"> 
+  <a href="./15-explainable-ai-exercises.html" class="sidebar-item-text sidebar-link">
+ <span class="menu-text">15 解释性与诊断</span></a>
+  </div>
+</li>
+    </ul>
+    </div>
+</nav>
+<div id="quarto-sidebar-glass" class="quarto-sidebar-collapse-item" data-bs-toggle="collapse" data-bs-target=".quarto-sidebar-collapse-item"></div>
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">本页目录</h2>
+   
+  <ul>
+  <li><a href="#一概念与推导" id="toc-一概念与推导" class="nav-link active" data-scroll-target="#一概念与推导">一、概念与推导</a>
+  <ul class="collapse">
+  <li><a href="#练习-1形状参数感受野与全局平均池化" id="toc-练习-1形状参数感受野与全局平均池化" class="nav-link" data-scroll-target="#练习-1形状参数感受野与全局平均池化">练习 1：形状、参数、感受野与全局平均池化</a></li>
+  <li><a href="#练习-2池化与-batchnorm2d-的手算" id="toc-练习-2池化与-batchnorm2d-的手算" class="nav-link" data-scroll-target="#练习-2池化与-batchnorm2d-的手算">练习 2：池化与 BatchNorm2d 的手算</a></li>
+  <li><a href="#练习-3vgg-块与残差块" id="toc-练习-3vgg-块与残差块" class="nav-link" data-scroll-target="#练习-3vgg-块与残差块">练习 3：VGG 块与残差块</a></li>
+  </ul></li>
+  <li><a href="#二编程实践" id="toc-二编程实践" class="nav-link" data-scroll-target="#二编程实践">二、编程实践</a>
+  <ul class="collapse">
+  <li><a href="#练习-4从零实现二维卷积" id="toc-练习-4从零实现二维卷积" class="nav-link" data-scroll-target="#练习-4从零实现二维卷积">练习 4：从零实现二维卷积</a></li>
+  <li><a href="#练习-5batchnorm2d-与-gap-的实测" id="toc-练习-5batchnorm2d-与-gap-的实测" class="nav-link" data-scroll-target="#练习-5batchnorm2d-与-gap-的实测">练习 5：BatchNorm2d 与 GAP 的实测</a></li>
+  <li><a href="#练习-6mini-vgggap-与可变输入" id="toc-练习-6mini-vgggap-与可变输入" class="nav-link" data-scroll-target="#练习-6mini-vgggap-与可变输入">练习 6：Mini-VGG、GAP 与可变输入</a></li>
+  </ul></li>
+  <li><a href="#三开放思考" id="toc-三开放思考" class="nav-link" data-scroll-target="#三开放思考">三、开放思考</a>
+  <ul class="collapse">
+  <li><a href="#练习-7迁移学习混合模型与-1d-卷积的取舍" id="toc-练习-7迁移学习混合模型与-1d-卷积的取舍" class="nav-link" data-scroll-target="#练习-7迁移学习混合模型与-1d-卷积的取舍">练习 7：迁移学习、混合模型与 1D 卷积的取舍</a></li>
+  </ul></li>
+  <li><a href="#四纠错与陷阱" id="toc-四纠错与陷阱" class="nav-link" data-scroll-target="#四纠错与陷阱">四、纠错与陷阱</a>
+  <ul class="collapse">
+  <li><a href="#练习-8四个真实-bug" id="toc-练习-8四个真实-bug" class="nav-link" data-scroll-target="#练习-8四个真实-bug">练习 8：四个真实 bug</a></li>
+  </ul></li>
+  </ul>
+</nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">07 卷积网络</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<p>本章从“滑动窗口加权的点积”出发，依次讨论卷积的形状计算、池化与归一化、VGG/ResNet 的模块化设计、全局平均池化、迁移学习，以及处理传感器序列的 1D 卷积。下面 8 道题按四类编排：</p>
+<ul>
+<li>概念与推导（练习 1–3）：输出形状、参数量、感受野、池化与 BatchNorm2d、VGG 块和残差连接。</li>
+<li>编程实践（练习 4–6）：手写二维卷积、BatchNorm2d/GAP 实测、Mini-VGG 与可变输入。</li>
+<li>开放思考（练习 7）：迁移学习、混合模型、1D CNN 的工程取舍。</li>
+<li>纠错与陷阱（练习 8）：通道顺序、展平维度、冻结骨干和验证集增强。</li>
+</ul>
+<p>建议用时约 3～3.5 小时。练习 1、2、4、8 可以先做；练习 6 需要完整跑一遍模型定义，练习 7 可以结合自己的数据场景展开。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过，固定种子后你的结果应当接近；凡是写“约”的地方，不必逐位对齐。</p>
+<section id="一概念与推导" class="level2">
+<h2 class="anchored" data-anchor-id="一概念与推导">一、概念与推导</h2>
+<section id="练习-1形状参数感受野与全局平均池化" class="level3">
+<h3 class="anchored" data-anchor-id="练习-1形状参数感受野与全局平均池化">练习 1：形状、参数、感受野与全局平均池化</h3>
+<p>考虑下面这个用于 <span class="math inline">\(64 \times 64\)</span> 彩色图像分类的小型卷积网络。输入形状为 <span class="math inline">\([N, 3, 64, 64]\)</span>，所有卷积都使用 <span class="math inline">\(3 \times 3\)</span> 核、步长 1、填充 1，并带偏置：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">层</th>
+<th style="text-align: left;">配置</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><code>conv1</code></td>
+<td style="text-align: left;">输入 3 通道，输出 32 通道，<span class="math inline">\(3\times3\)</span>，padding 1</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>pool1</code></td>
+<td style="text-align: left;"><span class="math inline">\(2\times2\)</span> 最大池化，步长 2</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>conv2</code></td>
+<td style="text-align: left;">输入 32 通道，输出 64 通道，<span class="math inline">\(3\times3\)</span>，padding 1</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>pool2</code></td>
+<td style="text-align: left;"><span class="math inline">\(2\times2\)</span> 最大池化，步长 2</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>gap</code></td>
+<td style="text-align: left;">对每个通道在 <span class="math inline">\(H,W\)</span> 上取平均</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>fc</code></td>
+<td style="text-align: left;"><span class="math inline">\(64 \to 10\)</span> 的全连接层</td>
+</tr>
+</tbody>
+</table>
+<p>请回答：</p>
+<ul>
+<li>（a） 逐层写出输出形状、参数量（含偏置）和每个样本的乘加次数（MACs）。总参数量是多少？哪个卷积层的 MACs 更大，为什么？</li>
+<li>（b） 为什么卷积层的参数量与图像大小无关，而 MACs 会随图像大小增长？这对深层网络的设计有什么实际含义？</li>
+<li>（c） 计算 GAP 之前一个特征点对应输入图像的感受野。把两个 <span class="math inline">\(3\times3\)</span> 卷积换成一个 <span class="math inline">\(5\times5\)</span> 卷积，感受野是否相同？在输入、输出通道数都为 <span class="math inline">\(C\)</span> 时，两者的参数量谁更少？这个结论在通道数变化时还成立吗？</li>
+<li>（d） 卷积是“平移等变”还是“平移不变”？池化和 GAP 各自带来了什么性质？如果把 GAP 换成“展平后接 <span class="math inline">\(64\cdot16\cdot16\to128\to10\)</span> 的全连接头”，分类头参数量会变成多少？两种设计的优缺点分别是什么？</li>
+</ul>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-1-contents" aria-controls="callout-1" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 1 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-1" class="callout-1-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）形状、参数和 MACs。</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">层</th>
+<th style="text-align: left;">输出形状</th>
+<th style="text-align: right;">参数量</th>
+<th style="text-align: right;">MACs / 样本</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><code>conv1</code></td>
+<td style="text-align: left;"><span class="math inline">\([N,32,64,64]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\((3\cdot3\cdot3+1)\cdot32=896\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(32\cdot64\cdot64\cdot27=3{,}538{,}944\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>pool1</code></td>
+<td style="text-align: left;"><span class="math inline">\([N,32,32,32]\)</span></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>conv2</code></td>
+<td style="text-align: left;"><span class="math inline">\([N,64,32,32]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\((3\cdot3\cdot32+1)\cdot64=18{,}496\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(64\cdot32\cdot32\cdot288=18{,}874{,}368\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>pool2</code></td>
+<td style="text-align: left;"><span class="math inline">\([N,64,16,16]\)</span></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>gap</code></td>
+<td style="text-align: left;"><span class="math inline">\([N,64]\)</span></td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>fc</code></td>
+<td style="text-align: left;"><span class="math inline">\([N,10]\)</span></td>
+<td style="text-align: right;"><span class="math inline">\((64+1)\cdot10=650\)</span></td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<p>总参数量：</p>
+<p><span class="math display">\[
+896+18{,}496+650=20{,}042.
+\]</span></p>
+<p>总 MACs：</p>
+<p><span class="math display">\[
+3{,}538{,}944+18{,}874{,}368=22{,}413{,}312.
+\]</span></p>
+<p><code>conv2</code> 占总 MACs 的约 <span class="math inline">\(84.2\%\)</span>。虽然 <code>conv2</code> 的通道数更多、单个输出点的计算更贵（每个点要算 <span class="math inline">\(32\cdot9=288\)</span> 次乘加），但它的空间尺寸已经从 <span class="math inline">\(64\times64\)</span> 降到 <span class="math inline">\(32\times32\)</span>。真正决定计算量的是“输出元素数 × 每个元素的乘加数”，不能只看卷积核大小。</p>
+<p>（b）参数共享与计算量。</p>
+<p>卷积核在整张图上滑动时使用同一组权重，所以参数量只由 <span class="math inline">\(C_{in},C_{out},K\)</span> 决定，与 <span class="math inline">\(H,W\)</span> 无关。前向计算却要对每个空间位置做一次点积，因此 MACs 正比于输出特征图的 <span class="math inline">\(H_{out}W_{out}\)</span>。</p>
+<p>这带来两个设计上的后果：</p>
+<ol type="1">
+<li>池化或步长卷积把空间尺寸减半，后续卷积的 MACs 大约降到四分之一；所以网络可以“先宽后深”，在分辨率高的前几层用较少通道，在分辨率低的后几层增加通道。</li>
+<li>参数少不等于计算少。一个 <span class="math inline">\(3\times3\)</span> 卷积的参数量可能只有几千，但在大特征图上仍可能消耗大部分算力；分析模型时要把参数量和 MACs 分开看。</li>
+</ol>
+<p>（c）感受野与 <span class="math inline">\(3\times3\)</span> 堆叠。</p>
+<p>用 <span class="math inline">\(r\)</span> 表示感受野、<span class="math inline">\(j\)</span> 表示相邻输出点之间的输入步长（jump），则</p>
+<p><span class="math display">\[
+r_{out}=r_{in}+(K-1)j_{in},\qquad j_{out}=j_{in}S.
+\]</span></p>
+<p>从输入开始，<span class="math inline">\(r=1,j=1\)</span>：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">经过</th>
+<th style="text-align: right;"><span class="math inline">\(r\)</span></th>
+<th style="text-align: right;"><span class="math inline">\(j\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;"><code>conv1</code> (<span class="math inline">\(3\times3\)</span>, <span class="math inline">\(S=1\)</span>)</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>pool1</code> (<span class="math inline">\(2\times2\)</span>, <span class="math inline">\(S=2\)</span>)</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>conv2</code> (<span class="math inline">\(3\times3\)</span>, <span class="math inline">\(S=1\)</span>)</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>pool2</code> (<span class="math inline">\(2\times2\)</span>, <span class="math inline">\(S=2\)</span>)</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">2</td>
+</tr>
+</tbody>
+</table>
+<p>所以 GAP 之前的一个特征点，对应输入图像上约 <span class="math inline">\(10\times10\)</span> 的区域。</p>
+<p>两个 <span class="math inline">\(3\times3\)</span> 卷积（中间没有池化）的感受野是 <span class="math inline">\(3+(3-1)\cdot1=5\)</span>，与一个 <span class="math inline">\(5\times5\)</span> 卷积相同。若输入、输出通道数都为 <span class="math inline">\(C\)</span>，忽略偏置：</p>
+<p><span class="math display">\[
+\text{两个 }3\times3:\quad 2\cdot9C^2=18C^2,
+\qquad
+\text{一个 }5\times5:\quad 25C^2.
+\]</span></p>
+<p>两个 <span class="math inline">\(3\times3\)</span> 的参数量更少，而且中间多了一次 ReLU，非线性更强。这也是 VGG 用“小核堆叠”替代大核的核心理由。</p>
+<p>但这个“<span class="math inline">\(18&lt;25\)</span>”的结论有一个前提：每个卷积的输入、输出通道相同。如果通道数在变化，就要按实际通道数重算。例如第一个卷积把 <span class="math inline">\(64\)</span> 通道升到 <span class="math inline">\(128\)</span>，第二个卷积在 <span class="math inline">\(128\)</span> 通道上做：</p>
+<p><span class="math display">\[
+9\cdot64\cdot128+9\cdot128\cdot128=221{,}184
+\quad\text{vs.}\quad
+25\cdot64\cdot128=204{,}800.
+\]</span></p>
+<p>此时两个 <span class="math inline">\(3\times3\)</span> 反而更贵。一般地，若中间通道等于输出通道 <span class="math inline">\(C_{out}\)</span>，两个 <span class="math inline">\(3\times3\)</span> 的权重数为 <span class="math inline">\(9C_{in}C_{out}+9C_{out}^2\)</span>，一个 <span class="math inline">\(5\times5\)</span> 为 <span class="math inline">\(25C_{in}C_{out}\)</span>；前者更少当且仅当</p>
+<p><span class="math display">\[
+9C_{out}&lt;16C_{in}
+\quad\Longleftrightarrow\quad
+\frac{C_{out}}{C_{in}}&lt;\frac{16}{9}\approx1.78.
+\]</span></p>
+<p><span class="math inline">\(64\to64\)</span> 满足，<span class="math inline">\(64\to128\)</span> 不满足。</p>
+<p>（d）等变、不变与两种分类头。</p>
+<p>卷积本身是平移等变的：输入平移 <span class="math inline">\((a,b)\)</span>，特征图也平移 <span class="math inline">\((a,b)\)</span>（在忽略边界填充影响的意义上）。它不是平移不变——输出会跟着动。池化在局部窗口内取最大值或平均值，削弱了特征的具体位置；GAP 再把整个空间平均掉，使输出对目标在画面中的位置不敏感，更接近平移不变。严格地说，带 padding 的卷积在边界处会破坏完全的等变性，数据增强也只是鼓励模型学到近似不变性。</p>
+<p>两种分类头的参数量：</p>
+<ul>
+<li>GAP + <code>fc(64, 10)</code>：<span class="math inline">\((64+1)\cdot10=650\)</span>。</li>
+<li>展平 + <code>fc(64*16*16, 128)</code> + <code>fc(128, 10)</code>：</li>
+</ul>
+<p><span class="math display">\[
+(64\cdot16\cdot16+1)\cdot128+(128+1)\cdot10
+=2{,}097{,}280+1{,}290
+=2{,}098{,}570.
+\]</span></p>
+<p>展平头的参数量是 GAP 头的约 <span class="math inline">\(3229\)</span> 倍，GAP 减少了约 <span class="math inline">\(99.97\%\)</span> 的参数。GAP 还带来两个好处：没有需要学习的空间权重，天然不易记住“特征在第几行第几列”；分类头只依赖通道数，因此可以接受不同大小的输入。代价是它把空间布局完全平均掉了，对分类通常没问题，但对检测、分割、需要定位的任务就不合适——那些任务需要保留特征图的空间结构。展平头保留位置，但参数多、容易过拟合，而且输入尺寸必须固定。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-2池化与-batchnorm2d-的手算" class="level3">
+<h3 class="anchored" data-anchor-id="练习-2池化与-batchnorm2d-的手算">练习 2：池化与 BatchNorm2d 的手算</h3>
+<p>（a） 对下面的 <span class="math inline">\(4\times4\)</span> 矩阵做 <span class="math inline">\(2\times2\)</span>、步长 2 的最大池化和平均池化，写出两个 <span class="math inline">\(2\times2\)</span> 输出：</p>
+<p><span class="math display">\[
+\begin{bmatrix}
+1 &amp; 3 &amp; | &amp; 2 &amp; 4\\
+5 &amp; 9 &amp; | &amp; 1 &amp; 1\\
+\hline
+8 &amp; 2 &amp; | &amp; 3 &amp; 2\\
+4 &amp; 6 &amp; | &amp; 9 &amp; 5
+\end{bmatrix}
+\]</span></p>
+<p>再计算：输入 <span class="math inline">\(5\times5\)</span>、核 <span class="math inline">\(3\times3\)</span>、步长 2、填充 1 时，输出边长是多少？</p>
+<p>（b） 下面这个张量按 NCHW 顺序构造，形状为 <span class="math inline">\([2,2,2,2]\)</span>：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">4</span>,           <span class="co"># n = 1, c = 1</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="dv">10</span>, <span class="dv">10</span>, <span class="dv">10</span>, <span class="dv">10</span>,       <span class="co"># n = 1, c = 2</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="dv">5</span>, <span class="dv">6</span>, <span class="dv">7</span>, <span class="dv">8</span>,           <span class="co"># n = 2, c = 1</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="dv">12</span>, <span class="dv">12</span>, <span class="dv">12</span>, <span class="dv">12</span>        <span class="co"># n = 2, c = 2</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">2</span>))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>令 <code>bn &lt;- nn_batch_norm2d(2, eps = 0)</code>，在训练模式下对 <code>x</code> 做一次前向。请计算：</p>
+<ul>
+<li>两个通道各自的均值 <span class="math inline">\(\mu_c\)</span> 和有偏方差 <span class="math inline">\(\sigma_c^2\)</span>；</li>
+<li>两个通道归一化后的输出（写出通道 1 的 8 个值，通道 2 可以只写两类值）；</li>
+<li>一次更新后的 <code>running_mean</code> 和 <code>running_var</code>。设初始 <code>running_mean = 0</code>、<code>running_var = 1</code>，<code>momentum = 0.1</code>，并说明 <code>running_var</code> 用的是有偏还是无偏方差。</li>
+</ul>
+<p>（c） <code>nn_batch_norm2d(C)</code> 有多少个可学习参数？为什么不是 <span class="math inline">\(2CHW\)</span>？训练模式和评估模式分别用什么统计量？如果训练时 <span class="math inline">\(N=1\)</span> 且 <span class="math inline">\(H=W=1\)</span>，会发生什么？</p>
+<p>（d） 怎样用 <code>nn_batch_norm1d</code> 得到与 <code>nn_batch_norm2d</code> 完全相同的训练输出？请写出 reshape 的方式，并解释为什么两者等价。</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-2-contents" aria-controls="callout-2" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 2 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-2" class="callout-2-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）池化。</p>
+<p>四个窗口分别是左上 <span class="math inline">\([1,3,5,9]\)</span>、右上 <span class="math inline">\([2,4,1,1]\)</span>、左下 <span class="math inline">\([8,2,4,6]\)</span>、右下 <span class="math inline">\([3,2,9,5]\)</span>。</p>
+<p>最大池化：</p>
+<p><span class="math display">\[
+\begin{bmatrix}
+9 &amp; 4\\
+8 &amp; 9
+\end{bmatrix}.
+\]</span></p>
+<p>平均池化：</p>
+<p><span class="math display">\[
+\begin{bmatrix}
+4.5 &amp; 2\\
+5 &amp; 4.75
+\end{bmatrix}.
+\]</span></p>
+<p>最大池化保留每个窗口里最强的响应，平均池化把所有响应平滑地汇总；前者对“特征是否出现”更敏感，后者保留更多整体强度信息。</p>
+<p>输出边长：</p>
+<p><span class="math display">\[
+\left\lfloor\frac{5-3+2\cdot1}{2}\right\rfloor+1
+=\left\lfloor\frac{4}{2}\right\rfloor+1=3.
+\]</span></p>
+<p>（b）BatchNorm2d 的手算。</p>
+<p>通道 1 的 8 个数是 <span class="math inline">\(1,2,\dots,8\)</span>：</p>
+<p><span class="math display">\[
+\mu_1=\frac{1+2+\cdots+8}{8}=4.5,
+\qquad
+\sigma_1^2=\frac{1}{8}\sum_{i=1}^{8}(i-4.5)^2=5.25.
+\]</span></p>
+<p>通道 2 的 8 个数是四个 10 和四个 12：</p>
+<p><span class="math display">\[
+\mu_2=11,\qquad \sigma_2^2=1.
+\]</span></p>
+<p>取 <span class="math inline">\(\varepsilon=0\)</span>，通道 1 的归一化输出为</p>
+<p><span class="math display">\[
+\hat x=\frac{x-4.5}{\sqrt{5.25}}
+\approx(-1.5275,-1.0911,-0.6547,-0.2182,\;0.2182,0.6547,1.0911,1.5275).
+\]</span></p>
+<p>通道 2 的输出更简单：10 变成 <span class="math inline">\(-1\)</span>，12 变成 <span class="math inline">\(+1\)</span>（各重复四次）。训练模式下，两个通道输出的均值都是 0，有偏方差都是 1；<code>nn_batch_norm2d</code> 的默认 <code>affine = TRUE</code>，初始 <span class="math inline">\(\gamma=1,\beta=0\)</span>，所以输出就是上面的标准化值。</p>
+<p><code>running_mean</code> 按“旧值保留 <span class="math inline">\(1-\text{momentum}\)</span>、新批次占 momentum”更新：</p>
+<p><span class="math display">\[
+\text{running\_mean}_1=0.9\cdot0+0.1\cdot4.5=0.45,
+\qquad
+\text{running\_mean}_2=0.9\cdot0+0.1\cdot11=1.1.
+\]</span></p>
+<p><code>running_var</code> 用的是无偏方差（分母 <span class="math inline">\(n-1\)</span>），而前向归一化用的是有偏方差（分母 <span class="math inline">\(n\)</span>）。这里每个通道有 <span class="math inline">\(n=NHW=8\)</span> 个元素：</p>
+<p><span class="math display">\[
+s_1^2=\frac{8}{7}\cdot5.25=6,
+\qquad
+s_2^2=\frac{8}{7}\cdot1=\frac{8}{7}.
+\]</span></p>
+<p>初始 <code>running_var = 1</code>，于是</p>
+<p><span class="math display">\[
+\text{running\_var}_1=0.9\cdot1+0.1\cdot6=1.5,
+\qquad
+\text{running\_var}_2=0.9\cdot1+0.1\cdot\frac{8}{7}\approx1.0143.
+\]</span></p>
+<p>注意：<code>running_var</code> 不会在第一批就变成 1，它只是向批次统计量靠近；要经过很多批才逐渐稳定。当前 torch 的 BatchNorm 实现使用无偏方差更新 running stats，这一点在手工核对时要特别小心。</p>
+<p>（c）参数与模式。</p>
+<p><code>nn_batch_norm2d(C)</code> 的可学习参数是每个通道一个缩放 <span class="math inline">\(\gamma_c\)</span> 和一个平移 <span class="math inline">\(\beta_c\)</span>，共 <span class="math inline">\(2C\)</span> 个；<code>running_mean</code>、<code>running_var</code> 是缓冲区，不是可学习参数。无论特征图多大，归一化都是“每个通道一套统计量”，所以参数量与 <span class="math inline">\(H,W\)</span> 无关。如果设 <code>affine = FALSE</code>，可学习参数为 0。</p>
+<p>训练模式使用当前批次的统计量：</p>
+<p><span class="math display">\[
+\mu_c=\frac{1}{NHW}\sum_{n,h,w}x_{n,c,h,w},
+\qquad
+\sigma_c^2=\frac{1}{NHW}\sum_{n,h,w}(x_{n,c,h,w}-\mu_c)^2.
+\]</span></p>
+<p>评估模式使用 Running stats，因此同一个样本的输出不再依赖同批次的其他样本。这也是训练时和推理时结果可能不同的原因之一。</p>
+<p>如果 <span class="math inline">\(N=1\)</span> 且 <span class="math inline">\(H=W=1\)</span>，每个通道只有一个元素：有偏方差为 0，前向输出被归一化为 0（<code>eps</code> 保护了除法）；但 <code>running_var</code> 的无偏方差分母 <span class="math inline">\(n-1=0\)</span>，会变成 <code>NaN</code>，之后评估模式也会输出 <code>NaN</code>。所以 BatchNorm 不适合“每通道只有一个值”的微批次；要么保证每个通道有足够多的元素，要么改用 GroupNorm/LayerNorm，或者设置 <code>track_running_stats = FALSE</code>。</p>
+<p>（d）BatchNorm1d 的等价写法。</p>
+<p>把 <span class="math inline">\([N,C,H,W]\)</span> 看成 <span class="math inline">\([N,C,L]\)</span>，其中 <span class="math inline">\(L=H\cdot W\)</span>：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>bn1 <span class="ot">&lt;-</span> <span class="fu">nn_batch_norm1d</span>(<span class="dv">2</span>, <span class="at">eps =</span> <span class="dv">0</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>bn1<span class="sc">$</span><span class="fu">train</span>()</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>y1 <span class="ot">&lt;-</span> <span class="fu">bn1</span>(x<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">4</span>)))</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>y1<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">2</span>, <span class="dv">2</span>))   <span class="co"># 与 bn(x) 相同</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>nn_batch_norm1d</code> 对每个通道在 <span class="math inline">\(N\)</span> 和 <span class="math inline">\(L\)</span> 两个轴上求统计量；因为 <span class="math inline">\(L\)</span> 恰好是 <span class="math inline">\(H\cdot W\)</span>，所以它和 <code>nn_batch_norm2d</code> 在 <span class="math inline">\(N,H,W\)</span> 上求统计量完全一致。实测两者的最大绝对误差为 0。注意评估模式下要保证两个模块的 <code>running_mean</code>、<code>running_var</code> 也一致，否则输出会不同。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-3vgg-块与残差块" class="level3">
+<h3 class="anchored" data-anchor-id="练习-3vgg-块与残差块">练习 3：VGG 块与残差块</h3>
+<p>（a） 本章的 <code>vgg_block(num_convs, in_channels, out_channels)</code> 由若干个“<span class="math inline">\(3\times3\)</span> 卷积 + ReLU”和一个 <span class="math inline">\(2\times2\)</span> 最大池化组成。取 <code>num_convs = 2</code>，输入为 <span class="math inline">\([N,64,32,32]\)</span>：</p>
+<ul>
+<li>当 <code>out_channels = 64</code> 时，计算该块的参数量、输出形状和感受野；并与一个 <span class="math inline">\(5\times5\)</span> 卷积（输入输出同为 64 通道）比较参数量。</li>
+<li>当 <code>out_channels = 128</code> 时，再算一遍。此时“两个 <span class="math inline">\(3\times3\)</span> 比一个 <span class="math inline">\(5\times5\)</span> 参数少”还成立吗？请给出一般条件。</li>
+</ul>
+<p>（b） 本章的残差块使用两个 <span class="math inline">\(3\times3\)</span> 卷积（<code>bias = FALSE</code>）、两个 BatchNorm2d，以及形状不匹配时的 <span class="math inline">\(1\times1\)</span> 卷积捷径。取 <code>in_channels = 64</code>、<code>out_channels = 128</code>、<code>stride = 2</code>，输入 <span class="math inline">\([N,64,32,32]\)</span>：</p>
+<ul>
+<li>主路径、捷径和整个残差块各有多少参数？</li>
+<li>输出形状是什么？捷径相对于主路径增加了多少比例？</li>
+<li>如果改成 <code>in_channels = out_channels = 64</code>、<code>stride = 1</code>，参数量是多少？</li>
+</ul>
+<p>（c） 对残差结构 <span class="math inline">\(x_{l+1}=x_l+F(x_l,W_l)\)</span>，证明</p>
+<p><span class="math display">\[
+\frac{\partial \mathcal E}{\partial x_l}
+=
+\frac{\partial \mathcal E}{\partial x_L}
+\left(
+1+\frac{\partial}{\partial x_l}\sum_{i=l}^{L-1}F(x_i,W_i)
+\right).
+\]</span></p>
+<p>解释常数项“1”为什么有助于梯度传播。它是否意味着梯度绝对不会消失？</p>
+<p>（d） 深层 plain network 出现的“退化问题”和过拟合有什么区别？如果你训练了一个 50 层网络，发现它的训练误差比 20 层网络还高，应该优先怀疑哪一类问题？如果训练误差很低但验证误差很高，又该如何判断？</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-3-contents" aria-controls="callout-3" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 3 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-3" class="callout-3-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）VGG 块。</p>
+<p>先看 <code>out_channels = 64</code>。第一个卷积 <span class="math inline">\(64\to64\)</span>，第二个卷积 <span class="math inline">\(64\to64\)</span>，每个卷积的参数量为</p>
+<p><span class="math display">\[
+(3\cdot3\cdot64+1)\cdot64=36{,}928.
+\]</span></p>
+<p>两个卷积共 <span class="math inline">\(73{,}856\)</span> 个参数；池化没有参数。输入 <span class="math inline">\(32\times32\)</span>，padding 1 的 <span class="math inline">\(3\times3\)</span> 卷积保持 <span class="math inline">\(32\times32\)</span>，池化后变成 <span class="math inline">\(16\times16\)</span>，所以输出形状为 <span class="math inline">\([N,64,16,16]\)</span>。两个 <span class="math inline">\(3\times3\)</span> 卷积堆叠后的感受野是 <span class="math inline">\(5\times5\)</span>；再加上末尾的 <span class="math inline">\(2\times2\)</span> 池化，整个 VGG 块的感受野是 <span class="math inline">\(6\times6\)</span>。</p>
+<p>一个 <span class="math inline">\(5\times5\)</span>、<span class="math inline">\(64\to64\)</span> 的卷积有</p>
+<p><span class="math display">\[
+(5\cdot5\cdot64+1)\cdot64=102{,}464
+\]</span></p>
+<p>个参数。两个 <span class="math inline">\(3\times3\)</span> 少 <span class="math inline">\(28{,}608\)</span> 个参数（约 <span class="math inline">\(28\%\)</span>），而且中间多了一次 ReLU。</p>
+<p>再看 <code>out_channels = 128</code>。第一个卷积 <span class="math inline">\(64\to128\)</span>：</p>
+<p><span class="math display">\[
+(3\cdot3\cdot64+1)\cdot128=73{,}856.
+\]</span></p>
+<p>第二个卷积 <span class="math inline">\(128\to128\)</span>：</p>
+<p><span class="math display">\[
+(3\cdot3\cdot128+1)\cdot128=147{,}584.
+\]</span></p>
+<p>合计 <span class="math inline">\(221{,}440\)</span>。一个 <span class="math inline">\(5\times5\)</span>、<span class="math inline">\(64\to128\)</span> 的卷积：</p>
+<p><span class="math display">\[
+(5\cdot5\cdot64+1)\cdot128=204{,}928.
+\]</span></p>
+<p>此时两个 <span class="math inline">\(3\times3\)</span> 反而多 <span class="math inline">\(16{,}512\)</span> 个参数（约 <span class="math inline">\(8.1\%\)</span>）。原因是第二个 <span class="math inline">\(3\times3\)</span> 已经在 128 个通道上计算，而 <span class="math inline">\(5\times5\)</span> 只做了一次 <span class="math inline">\(64\to128\)</span> 的升维。</p>
+<p>忽略偏置，设中间通道等于输出通道 <span class="math inline">\(C_{out}\)</span>，则两个 <span class="math inline">\(3\times3\)</span> 的权重数为</p>
+<p><span class="math display">\[
+9C_{in}C_{out}+9C_{out}^2,
+\]</span></p>
+<p>一个 <span class="math inline">\(5\times5\)</span> 为 <span class="math inline">\(25C_{in}C_{out}\)</span>。前者更少当且仅当</p>
+<p><span class="math display">\[
+9C_{out}&lt;16C_{in}
+\quad\Longleftrightarrow\quad
+\frac{C_{out}}{C_{in}}&lt;\frac{16}{9}\approx1.78.
+\]</span></p>
+<p>所以“两个 <span class="math inline">\(3\times3\)</span> 更省参数”只在通道数大致相等或缓慢变化时成立；通道数翻倍时，结论会反过来。</p>
+<p>（b）残差块参数。</p>
+<p>主路径：</p>
+<ul>
+<li><code>conv1</code>：<span class="math inline">\(3\cdot3\cdot64\cdot128=73{,}728\)</span>；</li>
+<li><code>bn1</code>：<span class="math inline">\(2\cdot128=256\)</span>；</li>
+<li><code>conv2</code>：<span class="math inline">\(3\cdot3\cdot128\cdot128=147{,}456\)</span>；</li>
+<li><code>bn2</code>：<span class="math inline">\(2\cdot128=256\)</span>。</li>
+</ul>
+<p>主路径合计 <span class="math inline">\(221{,}696\)</span>。捷径需要把 <span class="math inline">\([N,64,32,32]\)</span> 变成 <span class="math inline">\([N,128,16,16]\)</span>，用 <span class="math inline">\(1\times1\)</span>、步长 2 的卷积：</p>
+<p><span class="math display">\[
+1\cdot1\cdot64\cdot128=8{,}192,
+\]</span></p>
+<p>再加一个 BN 的 <span class="math inline">\(2\cdot128=256\)</span>，捷径共 <span class="math inline">\(8{,}448\)</span>。整个残差块：</p>
+<p><span class="math display">\[
+221{,}696+8{,}448=230{,}144.
+\]</span></p>
+<p>捷径只占主路径的约 <span class="math inline">\(3.8\%\)</span>，但它解决了形状不匹配时的相加问题。输出形状为 <span class="math inline">\([N,128,16,16]\)</span>。</p>
+<p>如果 <code>in_channels = out_channels = 64</code>、<code>stride = 1</code>，捷径就是恒等映射，没有参数；主路径为</p>
+<p><span class="math display">\[
+2\cdot(3\cdot3\cdot64\cdot64)+2\cdot(2\cdot64)
+=73{,}728+256=73{,}984.
+\]</span></p>
+<p>（c）梯度展开。</p>
+<p>把递归式展开：</p>
+<p><span class="math display">\[
+x_L=x_l+\sum_{i=l}^{L-1}F(x_i,W_i).
+\]</span></p>
+<p>对 <span class="math inline">\(x_l\)</span> 求导，注意 <span class="math inline">\(x_l\)</span> 同时出现在第一项和求和项里：</p>
+<p><span class="math display">\[
+\frac{\partial x_L}{\partial x_l}
+=
+1+\frac{\partial}{\partial x_l}\sum_{i=l}^{L-1}F(x_i,W_i).
+\]</span></p>
+<p>两边左乘损失对 <span class="math inline">\(x_L\)</span> 的梯度，就得到题目中的式子。</p>
+<p>在普通平铺网络中，<span class="math inline">\(\partial x_L/\partial x_l\)</span> 是各层雅可比矩阵的连乘，任何一层的小梯度都会把整个乘积拉小，任何一层的大梯度都会把它放大。残差网络把它变成了“恒等项 + 残差项”的加法：即使所有 <span class="math inline">\(F\)</span> 的导数都很小，梯度仍可以通过常数 1 直接回传。这不是说梯度“绝对不会消失”——<span class="math inline">\(\partial \mathcal E/\partial x_L\)</span> 本身可能很小，<span class="math inline">\(F'\)</span> 也可能是负的，BN/ReLU 仍会影响数值；但至少梯度不再被迫穿过一长串乘法。残差连接主要改善的是优化，让深层网络更容易训练，而不是给模型增加某种无限容量。</p>
+<p>（d）退化与过拟合。</p>
+<ul>
+<li>退化问题：更深的 plain network 在训练集上的误差反而更高。这不是过拟合（过拟合是训练误差低、验证误差高），而是优化困难：梯度在深层反向传播时消失或爆炸，或者恒等映射难以用多层非线性逼近。</li>
+<li>过拟合：训练误差很低，验证误差明显更高；模型记住了训练样本的噪声。</li>
+</ul>
+<p>所以，50 层网络的训练误差比 20 层还高，应优先怀疑退化/优化问题，而不是过拟合。可以检查：是否加了残差连接、BN 的位置是否正确、学习率是否合适、初始化是否合理。相反，如果训练误差很低但验证误差高，才应该用数据增强、Dropout、权重衰减、早停、冻结部分层等手段控制过拟合。残差连接解决的是前者；它并不能替代后者的正则化。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="二编程实践" class="level2">
+<h2 class="anchored" data-anchor-id="二编程实践">二、编程实践</h2>
+<section id="练习-4从零实现二维卷积" class="level3">
+<h3 class="anchored" data-anchor-id="练习-4从零实现二维卷积">练习 4：从零实现二维卷积</h3>
+<p>（a） 对下面的单通道输入 <span class="math inline">\(X\)</span> 和 <span class="math inline">\(3\times3\)</span> 卷积核 <span class="math inline">\(K\)</span>，不使用 <code>nn_conv2d</code>，用 R 的循环实现一个 <code>naive_conv2d()</code>（步长 1、无填充、无偏置），计算输出：</p>
+<p><span class="math display">\[
+X=
+\begin{bmatrix}
+1&amp;2&amp;3&amp;0&amp;1\\
+4&amp;5&amp;6&amp;1&amp;0\\
+7&amp;8&amp;9&amp;2&amp;1\\
+0&amp;1&amp;2&amp;3&amp;4\\
+5&amp;6&amp;7&amp;8&amp;9
+\end{bmatrix},
+\qquad
+K=
+\begin{bmatrix}
+1&amp;0&amp;-1\\
+1&amp;0&amp;-1\\
+1&amp;0&amp;-1
+\end{bmatrix}.
+\]</span></p>
+<p>把结果与 <code>nn_conv2d(1, 1, 3, bias = FALSE)</code> 在相同权重下的输出比较，最大绝对误差应该是多少？这个卷积核在检测什么方向的边缘？</p>
+<p>（b） 把实现扩展到多通道：输入 <span class="math inline">\([1,3,5,5]\)</span>，卷积为 <span class="math inline">\(3\to4\)</span>、<span class="math inline">\(3\times3\)</span>、带偏置。输出形状和权重形状分别是什么？参数量是多少？每一个输出通道是如何把 3 个输入通道汇总起来的？</p>
+<p>（c） 用同一个 <span class="math inline">\(5\times5\)</span> 输入，计算以下配置的输出形状，并用 <code>nn_conv2d</code> 验证：</p>
+<ul>
+<li><code>kernel_size = 3, stride = 2, padding = 1</code>；</li>
+<li><code>kernel_size = 3, dilation = 2, stride = 1, padding = 0</code>。</li>
+</ul>
+<p>（d） 为什么 <code>nn_conv2d</code> 的权重形状是 <code>[C_out, C_in, K, K]</code>，而不是 <code>[C_in, C_out, K, K]</code>？一个卷积层一共有多少个“卷积核”？参数共享体现在哪里？</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-4-contents" aria-controls="callout-4" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 4 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-4" class="callout-4-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）手写卷积。</p>
+<p>下面这个实现只处理单个样本 <code>[C,H,W]</code>，重点是逻辑清楚，不追求速度：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>naive_conv2d <span class="ot">&lt;-</span> <span class="cf">function</span>(x, weight, <span class="at">bias =</span> <span class="dv">0</span>, <span class="at">stride =</span> <span class="dv">1</span>L, <span class="at">padding =</span> <span class="dv">0</span>L) {</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  xa <span class="ot">&lt;-</span> <span class="fu">as.array</span>(x)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  wa <span class="ot">&lt;-</span> <span class="fu">as.array</span>(weight)</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>  C_in  <span class="ot">&lt;-</span> <span class="fu">dim</span>(xa)[<span class="dv">1</span>]; H <span class="ot">&lt;-</span> <span class="fu">dim</span>(xa)[<span class="dv">2</span>]; W <span class="ot">&lt;-</span> <span class="fu">dim</span>(xa)[<span class="dv">3</span>]</span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>  C_out <span class="ot">&lt;-</span> <span class="fu">dim</span>(wa)[<span class="dv">1</span>]; K <span class="ot">&lt;-</span> <span class="fu">dim</span>(wa)[<span class="dv">3</span>]</span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>  Hp <span class="ot">&lt;-</span> H <span class="sc">+</span> <span class="dv">2</span>L <span class="sc">*</span> padding</span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>  Wp <span class="ot">&lt;-</span> W <span class="sc">+</span> <span class="dv">2</span>L <span class="sc">*</span> padding</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  xp <span class="ot">&lt;-</span> <span class="fu">array</span>(<span class="dv">0</span>, <span class="at">dim =</span> <span class="fu">c</span>(C_in, Hp, Wp))</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>  xp[, (padding <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(padding <span class="sc">+</span> H),</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>       (padding <span class="sc">+</span> <span class="dv">1</span>)<span class="sc">:</span>(padding <span class="sc">+</span> W)] <span class="ot">&lt;-</span> xa</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a>  H_out <span class="ot">&lt;-</span> <span class="fu">floor</span>((Hp <span class="sc">-</span> K) <span class="sc">/</span> stride) <span class="sc">+</span> <span class="dv">1</span>L</span>
+<span id="cb3-15"><a href="#cb3-15" aria-hidden="true" tabindex="-1"></a>  W_out <span class="ot">&lt;-</span> <span class="fu">floor</span>((Wp <span class="sc">-</span> K) <span class="sc">/</span> stride) <span class="sc">+</span> <span class="dv">1</span>L</span>
+<span id="cb3-16"><a href="#cb3-16" aria-hidden="true" tabindex="-1"></a>  out <span class="ot">&lt;-</span> <span class="fu">array</span>(<span class="dv">0</span>, <span class="at">dim =</span> <span class="fu">c</span>(C_out, H_out, W_out))</span>
+<span id="cb3-17"><a href="#cb3-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-18"><a href="#cb3-18" aria-hidden="true" tabindex="-1"></a>  bias <span class="ot">&lt;-</span> <span class="fu">as.numeric</span>(bias)</span>
+<span id="cb3-19"><a href="#cb3-19" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> (co <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span>C_out) {</span>
+<span id="cb3-20"><a href="#cb3-20" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span>H_out) {</span>
+<span id="cb3-21"><a href="#cb3-21" aria-hidden="true" tabindex="-1"></a>      <span class="cf">for</span> (j <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span>W_out) {</span>
+<span id="cb3-22"><a href="#cb3-22" aria-hidden="true" tabindex="-1"></a>        h0 <span class="ot">&lt;-</span> (i <span class="sc">-</span> <span class="dv">1</span>L) <span class="sc">*</span> stride <span class="sc">+</span> <span class="dv">1</span>L</span>
+<span id="cb3-23"><a href="#cb3-23" aria-hidden="true" tabindex="-1"></a>        w0 <span class="ot">&lt;-</span> (j <span class="sc">-</span> <span class="dv">1</span>L) <span class="sc">*</span> stride <span class="sc">+</span> <span class="dv">1</span>L</span>
+<span id="cb3-24"><a href="#cb3-24" aria-hidden="true" tabindex="-1"></a>        patch <span class="ot">&lt;-</span> xp[, h0<span class="sc">:</span>(h0 <span class="sc">+</span> K <span class="sc">-</span> <span class="dv">1</span>L),</span>
+<span id="cb3-25"><a href="#cb3-25" aria-hidden="true" tabindex="-1"></a>                       w0<span class="sc">:</span>(w0 <span class="sc">+</span> K <span class="sc">-</span> <span class="dv">1</span>L), drop <span class="ot">=</span> <span class="cn">FALSE</span>]</span>
+<span id="cb3-26"><a href="#cb3-26" aria-hidden="true" tabindex="-1"></a>        kernel <span class="ot">&lt;-</span> <span class="fu">array</span>(wa[co, , , , <span class="at">drop =</span> <span class="cn">FALSE</span>],</span>
+<span id="cb3-27"><a href="#cb3-27" aria-hidden="true" tabindex="-1"></a>                        <span class="at">dim =</span> <span class="fu">dim</span>(wa)[<span class="sc">-</span><span class="dv">1</span>])</span>
+<span id="cb3-28"><a href="#cb3-28" aria-hidden="true" tabindex="-1"></a>        b <span class="ot">&lt;-</span> <span class="cf">if</span> (<span class="fu">length</span>(bias) <span class="sc">==</span> <span class="dv">1</span>) bias <span class="cf">else</span> bias[co]</span>
+<span id="cb3-29"><a href="#cb3-29" aria-hidden="true" tabindex="-1"></a>        out[co, i, j] <span class="ot">&lt;-</span> <span class="fu">sum</span>(patch <span class="sc">*</span> kernel) <span class="sc">+</span> b</span>
+<span id="cb3-30"><a href="#cb3-30" aria-hidden="true" tabindex="-1"></a>      }</span>
+<span id="cb3-31"><a href="#cb3-31" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb3-32"><a href="#cb3-32" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb3-33"><a href="#cb3-33" aria-hidden="true" tabindex="-1"></a>  <span class="fu">torch_tensor</span>(out, <span class="at">dtype =</span> <span class="fu">torch_float</span>())</span>
+<span id="cb3-34"><a href="#cb3-34" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>用题目中的 <span class="math inline">\(X\)</span> 和 <span class="math inline">\(K\)</span>：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>X <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>,<span class="dv">2</span>,<span class="dv">3</span>,<span class="dv">0</span>,<span class="dv">1</span>,</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  <span class="dv">4</span>,<span class="dv">5</span>,<span class="dv">6</span>,<span class="dv">1</span>,<span class="dv">0</span>,</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="dv">7</span>,<span class="dv">8</span>,<span class="dv">9</span>,<span class="dv">2</span>,<span class="dv">1</span>,</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="dv">0</span>,<span class="dv">1</span>,<span class="dv">2</span>,<span class="dv">3</span>,<span class="dv">4</span>,</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>  <span class="dv">5</span>,<span class="dv">6</span>,<span class="dv">7</span>,<span class="dv">8</span>,<span class="dv">9</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">5</span>, <span class="dv">5</span>))</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>K <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>,<span class="dv">0</span>,<span class="sc">-</span><span class="dv">1</span>,</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>,<span class="dv">0</span>,<span class="sc">-</span><span class="dv">1</span>,</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a>  <span class="dv">1</span>,<span class="dv">0</span>,<span class="sc">-</span><span class="dv">1</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>), <span class="at">dtype =</span> <span class="fu">torch_float</span>())<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">3</span>, <span class="dv">3</span>))</span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>out <span class="ot">&lt;-</span> <span class="fu">naive_conv2d</span>(X, K)</span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>out[<span class="dv">1</span>, , ]</span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a><span class="co"># torch_tensor</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a><span class="co">#  -6  12  16</span></span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a><span class="co">#  -6   8  12</span></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a><span class="co">#  -6   2   4</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>与 torch 的卷积比较：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>conv <span class="ot">&lt;-</span> <span class="fu">nn_conv2d</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">3</span>, <span class="at">bias =</span> <span class="cn">FALSE</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="fu">with_no_grad</span>(conv<span class="sc">$</span>weight<span class="sc">$</span><span class="fu">copy_</span>(K))</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>ref <span class="ot">&lt;-</span> <span class="fu">conv</span>(X<span class="sc">$</span><span class="fu">unsqueeze</span>(<span class="dv">1</span>))<span class="sc">$</span><span class="fu">squeeze</span>(<span class="dv">1</span>)</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>((out <span class="sc">-</span> ref)<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>())   <span class="co"># 0</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>最大绝对误差为 0（把权重复制到 torch 层时要用 <code>copy_()</code>，直接给 <code>$data</code> 赋值在 R torch 中不可行）。</p>
+<p>这个核的左右两列是 <span class="math inline">\(+1\)</span> 和 <span class="math inline">\(-1\)</span>，中间列是 0；它对竖直边缘敏感：图像在水平方向上的灰度跳变会产生强响应。若把核转置，就变成水平边缘检测器。</p>
+<p>（b）多通道卷积。</p>
+<p>输入 <span class="math inline">\([1,3,5,5]\)</span>，输出通道 4、核 <span class="math inline">\(3\times3\)</span>、无填充、步长 1：</p>
+<ul>
+<li>输出形状：<span class="math inline">\([1,4,3,3]\)</span>；</li>
+<li>权重形状：<span class="math inline">\([4,3,3,3]\)</span>，即 <code>[C_out, C_in, K, K]</code>；</li>
+<li>偏置形状：<span class="math inline">\([4]\)</span>；</li>
+<li>参数量：<span class="math inline">\((3\cdot3\cdot3+1)\cdot4=112\)</span>。</li>
+</ul>
+<p>对每个输出通道 <span class="math inline">\(c_o\)</span>，网络有 3 个 <span class="math inline">\(3\times3\)</span> 核，分别对应 3 个输入通道。计算时把 3 个通道的卷积结果逐元素相加，再加一个偏置：</p>
+<p><span class="math display">\[
+Y_{c_o,i,j}
+=
+\sum_{c_i=1}^{3}
+\sum_{m=1}^{3}\sum_{n=1}^{3}
+X_{c_i,i+m-1,j+n-1}K_{c_o,c_i,m,n}
++b_{c_o}.
+\]</span></p>
+<p>所以“一个输出通道”并不是一个二维核，而是 <span class="math inline">\(C_{in}\)</span> 个二维核组成的三维权重块；不同输出通道之间不共享权重。</p>
+<p>（c）形状验证。</p>
+<p>输出边长公式（无空洞）为</p>
+<p><span class="math display">\[
+H_{out}=\left\lfloor\frac{H-K+2P}{S}\right\rfloor+1.
+\]</span></p>
+<ul>
+<li><span class="math inline">\(K=3,S=2,P=1\)</span>：<span class="math inline">\(\lfloor(5-3+2)/2\rfloor+1=3\)</span>，输出 <span class="math inline">\(3\times3\)</span>。</li>
+<li><span class="math inline">\(K=3,D=2\)</span>：有效核大小为 <span class="math inline">\(D(K-1)+1=5\)</span>，输出 <span class="math inline">\(\lfloor(5-5)/1\rfloor+1=1\)</span>，即 <span class="math inline">\(1\times1\)</span>。</li>
+</ul>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">5</span>, <span class="dv">5</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="fu">nn_conv2d</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">3</span>, <span class="at">stride =</span> <span class="dv">2</span>, <span class="at">padding =</span> <span class="dv">1</span>)(x)<span class="sc">$</span>shape  <span class="co"># 1 1 3 3</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="fu">nn_conv2d</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">3</span>, <span class="at">dilation =</span> <span class="dv">2</span>)(x)<span class="sc">$</span>shape             <span class="co"># 1 1 1 1</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（d）权重布局与参数共享。</p>
+<p><code>[C_out, C_in, K, K]</code> 是 PyTorch/torch 的约定：第一个维度选择“哪个输出通道”，第二个维度选择“哪个输入通道”，后两维是空间核。每个输出通道都有自己的一组 <span class="math inline">\(C_{in}\times K\times K\)</span> 权重，所以一共有 <span class="math inline">\(C_{out}\)</span> 个三维卷积核（也可以说有 <span class="math inline">\(C_{out}\cdot C_{in}\)</span> 个二维核）。</p>
+<p>参数共享发生在空间维度：同一个三维核在图像的所有位置上重复使用，因此参数量不随 <span class="math inline">\(H,W\)</span> 增长。它不发生在通道维度——不同输入通道、不同输出通道的权重是各自独立的。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-5batchnorm2d-与-gap-的实测" class="level3">
+<h3 class="anchored" data-anchor-id="练习-5batchnorm2d-与-gap-的实测">练习 5：BatchNorm2d 与 GAP 的实测</h3>
+<p>（a） 构造一个形状为 <span class="math inline">\([8,4,6,6]\)</span> 的张量，让 4 个通道有不同的均值和尺度：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_manual_seed</span>(<span class="dv">7</span>)</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>offset <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(<span class="dv">0</span>, <span class="dv">5</span>, <span class="sc">-</span><span class="dv">2</span>, <span class="dv">10</span>))<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">1</span>, <span class="dv">1</span>))</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>scale  <span class="ot">&lt;-</span> <span class="fu">torch_tensor</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="fl">0.5</span>, <span class="dv">3</span>))<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">1</span>, <span class="dv">1</span>))</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">6</span>, <span class="dv">6</span>) <span class="sc">*</span> scale <span class="sc">+</span> offset</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>在训练模式下通过 <code>nn_batch_norm2d(4)</code>，验证：</p>
+<ul>
+<li>每个通道输出的均值是否接近 0、有偏方差是否接近 1；</li>
+<li>一次更新后的 <code>running_mean</code>、<code>running_var</code> 大致是什么；</li>
+<li>把同一批数据换成前 4 个样本，训练模式下第一个样本的输出是否改变？评估模式下呢？</li>
+</ul>
+<p>（b） 用 <code>nn_batch_norm1d</code> 对 <code>x</code> 的 reshape 版本做同样的归一化，验证输出与 <code>nn_batch_norm2d</code> 一致。</p>
+<p>（c） 实现 GAP，并与 <code>nnf_adaptive_avg_pool2d(x, c(1, 1))</code> 比较。把同一个 <code>nn_linear(C, 10)</code> 接在 <span class="math inline">\(7\times7\)</span> 和 <span class="math inline">\(13\times13\)</span> 的 GAP 输出后面，形状分别是什么？为什么不需要改全连接层？</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-5-contents" aria-controls="callout-5" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 5 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-5" class="callout-5-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）训练模式与评估模式。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>bn <span class="ot">&lt;-</span> <span class="fu">nn_batch_norm2d</span>(<span class="dv">4</span>)</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>bn<span class="sc">$</span><span class="fu">train</span>()</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a>y <span class="ot">&lt;-</span> <span class="fu">bn</span>(x)</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a><span class="fu">round</span>(<span class="fu">as.numeric</span>(y<span class="sc">$</span><span class="fu">mean</span>(<span class="at">dim =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">3</span>, <span class="dv">4</span>))), <span class="dv">6</span>)</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a><span class="co"># 大约 0 0 0 0</span></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="fu">round</span>(<span class="fu">as.numeric</span>(y<span class="sc">$</span><span class="fu">var</span>(<span class="at">dim =</span> <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">3</span>, <span class="dv">4</span>), <span class="at">unbiased =</span> <span class="cn">FALSE</span>)), <span class="dv">6</span>)</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a><span class="co"># 大约 1 1 1 1</span></span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-10"><a href="#cb8-10" aria-hidden="true" tabindex="-1"></a><span class="fu">round</span>(<span class="fu">as.numeric</span>(bn<span class="sc">$</span>running_mean), <span class="dv">4</span>)</span>
+<span id="cb8-11"><a href="#cb8-11" aria-hidden="true" tabindex="-1"></a><span class="co"># 大约 0.007 0.496 -0.200 1.020</span></span>
+<span id="cb8-12"><a href="#cb8-12" aria-hidden="true" tabindex="-1"></a><span class="fu">round</span>(<span class="fu">as.numeric</span>(bn<span class="sc">$</span>running_var), <span class="dv">4</span>)</span>
+<span id="cb8-13"><a href="#cb8-13" aria-hidden="true" tabindex="-1"></a><span class="co"># 大约 0.990 1.317 0.923 1.865</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>训练模式下，BatchNorm 用当前批次的统计量把每个通道标准化，所以输出的均值/方差必然接近 0/1（在浮点误差范围内）。<code>running_mean</code> 是一次指数平均：初始为 0，<code>momentum = 0.1</code> 时大约变成 <span class="math inline">\(0.1\times\)</span> 通道均值。<code>running_var</code> 的初始值是 1，所以它大约变成 <span class="math inline">\(0.9\times1+0.1\times\)</span> 无偏批次方差；四个通道的尺度不同，更新后的值也不会相同。由于只更新了一次，这些 running stats 还远没有收敛。</p>
+<p>训练模式下，把批次从 8 个样本换成前 4 个，第一个样本的输出会改变，因为它的归一化用到了同批次其他样本的均值/方差。实测最大差异约 <span class="math inline">\(0.185\)</span>。评估模式下，<code>running_mean</code>、<code>running_var</code> 固定，同一个样本的输出与批次组成无关；实测最大差异为 0。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>bn<span class="sc">$</span><span class="fu">eval</span>()</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>y_full <span class="ot">&lt;-</span> <span class="fu">bn</span>(x)</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>y_half <span class="ot">&lt;-</span> <span class="fu">bn</span>(x[<span class="dv">1</span><span class="sc">:</span><span class="dv">4</span>, , , , <span class="at">drop =</span> <span class="cn">FALSE</span>])</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>((y_full[<span class="dv">1</span>, , , , <span class="at">drop =</span> <span class="cn">FALSE</span>] <span class="sc">-</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>             y_half[<span class="dv">1</span>, , , , <span class="at">drop =</span> <span class="cn">FALSE</span>])<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>())  <span class="co"># 0</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>这就是“训练时指标随 batch 波动、推理时结果稳定”的直接原因，也是评估前必须调用 <code>$eval()</code> 的原因。</p>
+<p>（b）BatchNorm1d 的等价写法。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>bn1 <span class="ot">&lt;-</span> <span class="fu">nn_batch_norm1d</span>(<span class="dv">4</span>)</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>bn1<span class="sc">$</span><span class="fu">train</span>()</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>y1 <span class="ot">&lt;-</span> <span class="fu">bn1</span>(x<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">36</span>)))</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>((y1<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">6</span>, <span class="dv">6</span>)) <span class="sc">-</span> y)<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>())  <span class="co"># 0</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>nn_batch_norm1d</code> 对 <span class="math inline">\([N,C,L]\)</span> 的每个通道在 <span class="math inline">\(N,L\)</span> 上求统计量；把 <span class="math inline">\(L\)</span> 设为 <span class="math inline">\(H\cdot W\)</span> 后，统计集合与 <code>nn_batch_norm2d</code> 的 <span class="math inline">\(N,H,W\)</span> 完全相同。注意两个模块必须使用相同的 <code>eps</code>、<code>affine</code> 设置；评估模式下还要保证 running stats 一致。</p>
+<p>（c）GAP。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a>gap <span class="ot">&lt;-</span> <span class="cf">function</span>(z) z<span class="sc">$</span><span class="fu">mean</span>(<span class="at">dim =</span> <span class="fu">c</span>(<span class="dv">3</span>, <span class="dv">4</span>))</span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>z <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">7</span>, <span class="dv">7</span>)</span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>g1 <span class="ot">&lt;-</span> <span class="fu">gap</span>(z)</span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>g2 <span class="ot">&lt;-</span> <span class="fu">nnf_adaptive_avg_pool2d</span>(z, <span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">1</span>))<span class="sc">$</span><span class="fu">view</span>(<span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">3</span>))</span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a><span class="fu">as.numeric</span>((g1 <span class="sc">-</span> g2)<span class="sc">$</span><span class="fu">abs</span>()<span class="sc">$</span><span class="fu">max</span>())   <span class="co"># 0</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>fc <span class="ot">&lt;-</span> <span class="fu">nn_linear</span>(<span class="dv">3</span>, <span class="dv">10</span>)</span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a><span class="fu">fc</span>(<span class="fu">gap</span>(<span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">7</span>, <span class="dv">7</span>)))<span class="sc">$</span>shape    <span class="co"># 2 10</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="fu">fc</span>(<span class="fu">gap</span>(<span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">13</span>, <span class="dv">13</span>)))<span class="sc">$</span>shape  <span class="co"># 2 10</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>GAP 对每个通道在 <span class="math inline">\(H,W\)</span> 上取平均，输出形状永远是 <span class="math inline">\([N,C]\)</span>，与 <span class="math inline">\(H,W\)</span> 无关。全连接层的输入维度只由通道数 <span class="math inline">\(C\)</span> 决定，所以 <span class="math inline">\(7\times7\)</span> 和 <span class="math inline">\(13\times13\)</span> 的特征图都可以接同一个 <code>fc</code>。如果换成 <code>nn_flatten()</code>，<span class="math inline">\(7\times7\)</span> 得到 <span class="math inline">\(C\cdot49\)</span> 维，<span class="math inline">\(13\times13\)</span> 得到 <span class="math inline">\(C\cdot169\)</span> 维，全连接层的权重形状就对不上了。</p>
+</div>
+</div>
+</div>
+</section>
+<section id="练习-6mini-vgggap-与可变输入" class="level3">
+<h3 class="anchored" data-anchor-id="练习-6mini-vgggap-与可变输入">练习 6：Mini-VGG、GAP 与可变输入</h3>
+<p>（a） 用本章的 <code>vgg_block()</code> 搭一个用于 <span class="math inline">\(28\times28\)</span> 灰度图的 Mini-VGG：</p>
+<ul>
+<li>两个 VGG 块，每块 2 个卷积；第一块 <span class="math inline">\(1\to64\)</span>，第二块 <span class="math inline">\(64\to128\)</span>；</li>
+<li>分类头为 <code>flatten -&gt; linear(128*7*7, 256) -&gt; ReLU -&gt; Dropout(0.5) -&gt; linear(256, 10)</code>。</li>
+</ul>
+<p>计算特征提取部分、分类头和整个模型的参数量，并验证输入 <span class="math inline">\([2,1,28,28]\)</span> 时输出 <span class="math inline">\([2,10]\)</span>。与本章的 <code>MNIST_CNN</code>（206,922 个参数）相比，参数主要增加在哪里？</p>
+<p>（b） 把分类头改成“GAP -&gt; linear(128, 256) -&gt; ReLU -&gt; Dropout(0.5) -&gt; linear(256, 10)”。重新计算参数量，并验证 <span class="math inline">\(28\times28\)</span> 和 <span class="math inline">\(56\times56\)</span> 输入都能得到 <span class="math inline">\([2,10]\)</span>。</p>
+<p>（c） 保留原来的 flatten 分类头，把输入换成 <span class="math inline">\(56\times56\)</span>，会发生什么？请写出实际的特征图形状、展平后的维度和报错信息。这个网络能接受的最小输入尺寸是多少？</p>
+<p>（d） 如果既想保留 flatten 头的空间信息，又想接受可变输入，有哪些改法？分别有什么代价？</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-6-contents" aria-controls="callout-6" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 6 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-6" class="callout-6-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）Mini-VGG 与参数量。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>vgg_block <span class="ot">&lt;-</span> <span class="cf">function</span>(num_convs, in_channels, out_channels) {</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  layers <span class="ot">&lt;-</span> <span class="fu">list</span>()</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span>num_convs) {</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>    layers[[<span class="fu">length</span>(layers) <span class="sc">+</span> <span class="dv">1</span>]] <span class="ot">&lt;-</span> <span class="fu">nn_conv2d</span>(</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>      in_channels, out_channels, <span class="at">kernel_size =</span> <span class="dv">3</span>, <span class="at">padding =</span> <span class="dv">1</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>    layers[[<span class="fu">length</span>(layers) <span class="sc">+</span> <span class="dv">1</span>]] <span class="ot">&lt;-</span> <span class="fu">nn_relu</span>()</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>    in_channels <span class="ot">&lt;-</span> out_channels</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a>  layers[[<span class="fu">length</span>(layers) <span class="sc">+</span> <span class="dv">1</span>]] <span class="ot">&lt;-</span> <span class="fu">nn_max_pool2d</span>(<span class="dv">2</span>, <span class="at">stride =</span> <span class="dv">2</span>)</span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">do.call</span>(nn_sequential, layers)</span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a>MiniVGG <span class="ot">&lt;-</span> <span class="fu">nn_module</span>(</span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a>  <span class="st">"MiniVGG"</span>,</span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>  <span class="at">initialize =</span> <span class="cf">function</span>() {</span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>features <span class="ot">&lt;-</span> <span class="fu">nn_sequential</span>(</span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a>      <span class="fu">vgg_block</span>(<span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">64</span>),</span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>      <span class="fu">vgg_block</span>(<span class="dv">2</span>, <span class="dv">64</span>, <span class="dv">128</span>)</span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>classifier <span class="ot">&lt;-</span> <span class="fu">nn_sequential</span>(</span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_flatten</span>(),</span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_linear</span>(<span class="dv">128</span> <span class="sc">*</span> <span class="dv">7</span> <span class="sc">*</span> <span class="dv">7</span>, <span class="dv">256</span>),</span>
+<span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_relu</span>(),</span>
+<span id="cb12-25"><a href="#cb12-25" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_dropout</span>(<span class="fl">0.5</span>),</span>
+<span id="cb12-26"><a href="#cb12-26" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_linear</span>(<span class="dv">256</span>, <span class="dv">10</span>)</span>
+<span id="cb12-27"><a href="#cb12-27" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb12-28"><a href="#cb12-28" aria-hidden="true" tabindex="-1"></a>  },</span>
+<span id="cb12-29"><a href="#cb12-29" aria-hidden="true" tabindex="-1"></a>  <span class="at">forward =</span> <span class="cf">function</span>(x) {</span>
+<span id="cb12-30"><a href="#cb12-30" aria-hidden="true" tabindex="-1"></a>    x <span class="sc">%&gt;%</span> self<span class="sc">$</span><span class="fu">features</span>() <span class="sc">%&gt;%</span> self<span class="sc">$</span><span class="fu">classifier</span>()</span>
+<span id="cb12-31"><a href="#cb12-31" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb12-32"><a href="#cb12-32" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>各层参数量：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">部分</th>
+<th style="text-align: left;">计算</th>
+<th style="text-align: right;">参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">Block 1, conv 1</td>
+<td style="text-align: left;"><span class="math inline">\((3\cdot3\cdot1+1)\cdot64\)</span></td>
+<td style="text-align: right;">640</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Block 1, conv 2</td>
+<td style="text-align: left;"><span class="math inline">\((3\cdot3\cdot64+1)\cdot64\)</span></td>
+<td style="text-align: right;">36,928</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">Block 2, conv 1</td>
+<td style="text-align: left;"><span class="math inline">\((3\cdot3\cdot64+1)\cdot128\)</span></td>
+<td style="text-align: right;">73,856</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">Block 2, conv 2</td>
+<td style="text-align: left;"><span class="math inline">\((3\cdot3\cdot128+1)\cdot128\)</span></td>
+<td style="text-align: right;">147,584</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">特征提取合计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">259,008</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">分类头 <code>6272 -&gt; 256</code></td>
+<td style="text-align: left;"><span class="math inline">\((6272+1)\cdot256\)</span></td>
+<td style="text-align: right;">1,605,888</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">分类头 <code>256 -&gt; 10</code></td>
+<td style="text-align: left;"><span class="math inline">\((256+1)\cdot10\)</span></td>
+<td style="text-align: right;">2,570</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">分类头合计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">1,608,458</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">总计</td>
+<td style="text-align: left;"></td>
+<td style="text-align: right;">1,867,466</td>
+</tr>
+</tbody>
+</table>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>m <span class="ot">&lt;-</span> <span class="fu">MiniVGG</span>()</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="fu">m</span>(<span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">28</span>, <span class="dv">28</span>))<span class="sc">$</span>shape  <span class="co"># 2 10</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sum</span>(<span class="fu">sapply</span>(m<span class="sc">$</span>parameters, <span class="cf">function</span>(p) p<span class="sc">$</span><span class="fu">numel</span>()))  <span class="co"># 1867466</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>与 <code>MNIST_CNN</code> 的 206,922 个参数相比，Mini-VGG 的参数主要增加在分类头：<span class="math inline">\(128\cdot7\cdot7=6272\)</span> 维输入接 256 个隐藏单元，仅这一层就有约 160 万个参数；而 <code>MNIST_CNN</code> 的分类头是 <span class="math inline">\(32\cdot7\cdot7=1568\to128\)</span>，约 20 万个参数。特征提取部分虽然更深，但卷积参数仍然只占约 26 万。</p>
+<p>（b）GAP 版本。</p>
+<p>把分类头改为“先 GAP，再两层全连接”：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>MiniVGG_GAP <span class="ot">&lt;-</span> <span class="fu">nn_module</span>(</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>  <span class="st">"MiniVGG_GAP"</span>,</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">initialize =</span> <span class="cf">function</span>() {</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>features <span class="ot">&lt;-</span> <span class="fu">nn_sequential</span>(</span>
+<span id="cb14-5"><a href="#cb14-5" aria-hidden="true" tabindex="-1"></a>      <span class="fu">vgg_block</span>(<span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">64</span>),</span>
+<span id="cb14-6"><a href="#cb14-6" aria-hidden="true" tabindex="-1"></a>      <span class="fu">vgg_block</span>(<span class="dv">2</span>, <span class="dv">64</span>, <span class="dv">128</span>)</span>
+<span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb14-8"><a href="#cb14-8" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span>classifier <span class="ot">&lt;-</span> <span class="fu">nn_sequential</span>(</span>
+<span id="cb14-9"><a href="#cb14-9" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_linear</span>(<span class="dv">128</span>, <span class="dv">256</span>),</span>
+<span id="cb14-10"><a href="#cb14-10" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_relu</span>(),</span>
+<span id="cb14-11"><a href="#cb14-11" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_dropout</span>(<span class="fl">0.5</span>),</span>
+<span id="cb14-12"><a href="#cb14-12" aria-hidden="true" tabindex="-1"></a>      <span class="fu">nn_linear</span>(<span class="dv">256</span>, <span class="dv">10</span>)</span>
+<span id="cb14-13"><a href="#cb14-13" aria-hidden="true" tabindex="-1"></a>    )</span>
+<span id="cb14-14"><a href="#cb14-14" aria-hidden="true" tabindex="-1"></a>  },</span>
+<span id="cb14-15"><a href="#cb14-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">forward =</span> <span class="cf">function</span>(x) {</span>
+<span id="cb14-16"><a href="#cb14-16" aria-hidden="true" tabindex="-1"></a>    x <span class="ot">&lt;-</span> self<span class="sc">$</span><span class="fu">features</span>(x)</span>
+<span id="cb14-17"><a href="#cb14-17" aria-hidden="true" tabindex="-1"></a>    x <span class="ot">&lt;-</span> x<span class="sc">$</span><span class="fu">mean</span>(<span class="at">dim =</span> <span class="fu">c</span>(<span class="dv">3</span>, <span class="dv">4</span>))</span>
+<span id="cb14-18"><a href="#cb14-18" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span><span class="fu">classifier</span>(x)</span>
+<span id="cb14-19"><a href="#cb14-19" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb14-20"><a href="#cb14-20" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>这里 <code>x$mean(dim = c(3, 4))</code> 就是 GAP：把 <span class="math inline">\([N,128,H,W]\)</span> 压成 <span class="math inline">\([N,128]\)</span>。参数量：</p>
+<table class="caption-top table">
+<thead>
+<tr class="header">
+<th style="text-align: left;">部分</th>
+<th style="text-align: right;">参数量</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">特征提取</td>
+<td style="text-align: right;">259,008</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;"><code>128 -&gt; 256</code></td>
+<td style="text-align: right;"><span class="math inline">\((128+1)\cdot256=33{,}024\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;"><code>256 -&gt; 10</code></td>
+<td style="text-align: right;">2,570</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">总计</td>
+<td style="text-align: right;">294,602</td>
+</tr>
+</tbody>
+</table>
+<p>GAP 版本的总参数量约为原来的 <span class="math inline">\(15.8\%\)</span>，减少了约 <span class="math inline">\(84.2\%\)</span>。验证：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>mg <span class="ot">&lt;-</span> <span class="fu">MiniVGG_GAP</span>()</span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="fu">mg</span>(<span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">28</span>, <span class="dv">28</span>))<span class="sc">$</span>shape  <span class="co"># 2 10</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a><span class="fu">mg</span>(<span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">1</span>, <span class="dv">56</span>, <span class="dv">56</span>))<span class="sc">$</span>shape  <span class="co"># 2 10</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（c）flatten 头遇到 <span class="math inline">\(56\times56\)</span>。</p>
+<p>特征提取部分有两个 <span class="math inline">\(2\times2\)</span> 池化，<span class="math inline">\(56\to28\to14\)</span>，所以特征图形状是 <span class="math inline">\([2,128,14,14]\)</span>，展平后是 <span class="math inline">\(2\times(128\cdot14\cdot14)=2\times25{,}088\)</span>。分类头却仍然期待 <span class="math inline">\(128\cdot7\cdot7=6272\)</span> 维：</p>
+<pre class="text"><code>mat1 and mat2 shapes cannot be multiplied (2x25088 and 6272x256)</code></pre>
+<p>最小输入尺寸：两个 <span class="math inline">\(2\times2\)</span> 池化要求每一维至少能连续减半两次，即 <span class="math inline">\(H,W\ge4\)</span>。<span class="math inline">\(4\to2\to1\)</span> 可以通过，GAP 版本随后得到 <span class="math inline">\([N,128]\)</span>；<span class="math inline">\(3\times3\)</span> 在第一次池化后变成 <span class="math inline">\(1\times1\)</span>，第二次池化就无法进行了。注意卷积本身有 padding，不会把尺寸减到 0；限制来自池化。</p>
+<p>（d）保留空间信息的可变输入方案。</p>
+<ol type="1">
+<li>自适应池化到固定网格：在展平前加 <code>nnf_adaptive_avg_pool2d(x, c(7, 7))</code>，把任意大小的特征图压到 <span class="math inline">\(7\times7\)</span>。这样保留了粗略的空间网格，但不同输入尺寸会被拉伸/压缩到同一尺度，定位精度受限于网格。</li>
+<li>固定输入尺寸：在数据管道里统一 resize/crop 到 <span class="math inline">\(28\times28\)</span> 或 <span class="math inline">\(224\times224\)</span>。实现简单，但会改变目标的尺度，可能丢失细节或引入变形。</li>
+<li>用 GAP 替代 flatten：接受任意尺寸，但没有空间信息；适合分类，不适合检测/分割。</li>
+<li>全卷积 + 全局池化/注意力：保留特征图，用 <span class="math inline">\(1\times1\)</span> 卷积或注意力汇总，而不是一次性展平；结构更复杂，但更适合需要位置信息的任务。</li>
+</ol>
+<p>选择哪一种，取决于任务是“这张图里有没有猫”还是“猫在哪里”。前者 GAP 通常够用，后者必须保留空间结构。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="三开放思考" class="level2">
+<h2 class="anchored" data-anchor-id="三开放思考">三、开放思考</h2>
+<section id="练习-7迁移学习混合模型与-1d-卷积的取舍" class="level3">
+<h3 class="anchored" data-anchor-id="练习-7迁移学习混合模型与-1d-卷积的取舍">练习 7：迁移学习、混合模型与 1D 卷积的取舍</h3>
+<p>假设你只有 800 张标注图像，共 10 类，每类约 80 张；你有一台单卡 GPU，可以使用在 ImageNet 上预训练的 MobileNetV2。请回答：</p>
+<p>（a） 比较三种迁移学习策略：只训练线性分类头、冻结骨干并训练一个较大的 MLP 头、解冻最后 <span class="math inline">\(k\)</span> 个卷积块做微调。它们的训练成本、过拟合风险和最终潜力各自如何？你会按什么顺序尝试？验证集应该怎么划？</p>
+<p>（b） 你先做了“冻结骨干 + 训练分类头”，得到训练准确率 0.55、验证准确率 0.52。这个结果更像是欠拟合还是过拟合？下一步应该先检查什么、再尝试什么？如果换成训练准确率 0.95、验证准确率 0.60，判断和措施又有什么不同？</p>
+<p>（c） 本章提到“CNN 特征 + XGBoost”的混合模型。它在什么场景下可能优于纯神经网络？把 CNN 特征送入 XGBoost 时，有哪些数据泄漏风险？交叉验证应该怎么设计？</p>
+<p>（d） 本章的 CowNet 用 5 秒窗口、50% 重叠的 1D CNN 识别奶牛站立/躺卧。与 RNN/Transformer 相比，1D CNN 的优势和局限是什么？重叠窗口在划分训练集/测试集时会带来什么风险？应该按什么单位切分数据？</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-7-contents" aria-controls="callout-7" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 7 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-7" class="callout-7-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）三种策略。</p>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: left;">策略</th>
+<th style="text-align: left;">训练成本</th>
+<th style="text-align: left;">过拟合风险</th>
+<th style="text-align: left;">潜力</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">冻结骨干 + 线性头</td>
+<td style="text-align: left;">最低，只需一次前向提特征</td>
+<td style="text-align: left;">最低</td>
+<td style="text-align: left;">最低；如果 ImageNet 特征与任务匹配，往往已经很强</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">冻结骨干 + 较大 MLP 头</td>
+<td style="text-align: left;">低到中</td>
+<td style="text-align: left;">中</td>
+<td style="text-align: left;">中；给分类头更多非线性</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">解冻最后 <span class="math inline">\(k\)</span> 个块 + 微调</td>
+<td style="text-align: left;">高；要反传到骨干</td>
+<td style="text-align: left;">高，尤其小样本</td>
+<td style="text-align: left;">最高；让特征适应新 domain</td>
+</tr>
+</tbody>
+</table>
+<p>合理的顺序是：先做线性头或小 MLP 头，建立一个强基线；如果训练/验证都欠拟合，再解冻最后 1～2 个块，用较小的学习率微调骨干、较大的学习率训练头（discriminative learning rates）。不要一开始就全网络微调：800 张图很容易把预训练特征破坏掉。</p>
+<p>验证集要分层抽样，保证每类在训练/验证中的比例接近；如果同一物体/同一场景有多张近 duplicate 图片，要按组划分，避免同一组同时出现在训练和验证里。最终留出一个独立的测试集，只用一次。</p>
+<p>（b）0.55/0.52 与 0.95/0.60。</p>
+<p>0.55/0.52 的绝对水平低，但训练和验证只差 0.03，说明模型没有足够拟合训练集，更像欠拟合/优化不足，而不是过拟合。先检查：标签是否正确、预处理是否与预训练模型匹配（通道顺序、归一化均值/方差、输入尺寸）、学习率是否太小、训练轮数是否足够、分类头是否太窄。然后可以：解冻最后一个卷积块、增大分类头、训练更久、换更合适的学习率。不要一上来就加 dropout 或强增强，那会让欠拟合更严重。</p>
+<p>0.95/0.60 则是明显的过拟合：训练集几乎记住，验证集泛化差。应优先加数据增强、权重衰减、Dropout、早停，或者冻结更多层、减少解冻块数；也可以收集更多数据或做半监督/伪标签。两条曲线的形状比单个数字更有信息量。</p>
+<p>（c）CNN + XGBoost。</p>
+<p>混合模型可能在以下场景占优：</p>
+<ul>
+<li>样本很少，神经网络的分类头需要大量数据才能稳定，而树模型对小样本更鲁棒；</li>
+<li>输入同时包含图像和表格特征（面积、邮编、传感器读数），可以把 CNN 的 1280 维 embedding 与表格特征拼接后交给 XGBoost；</li>
+<li>需要较强的可解释性/特征重要性，或者团队已有成熟的树模型管线。</li>
+</ul>
+<p>风险主要是泄漏：</p>
+<ul>
+<li>如果用全部数据（包括验证/测试）来拟合预训练 backbone 的 BN、归一化或特征提取器，测试信息会渗入特征；</li>
+<li>如果先对全数据做数据增强再切分，同一张原图的不同增强版本可能同时出现在训练和验证中；</li>
+<li>如果交叉验证的折之间共享近重复图像/同一病人/同一场景，特征也会泄漏。</li>
+</ul>
+<p>正确做法：先按组划分训练/验证/测试，再在训练折内拟合任何有监督的变换；CNN 特征提取器如果是固定的预训练模型，可以看成无监督变换，但它的归一化统计量仍应只用训练数据估计。交叉验证时，每一折都重新训练分类头/XGBoost，不能把全量特征先算好再随机切分。</p>
+<p>（d）1D CNN 与重叠窗口。</p>
+<p>1D CNN 的优势：</p>
+<ul>
+<li>卷积可以在时间轴上并行计算，训练比 RNN 快；</li>
+<li>局部卷积核擅长捕捉短时波形、波峰、震荡等局部模式；</li>
+<li>参数量少，适合传感器这种中低维序列；</li>
+<li>可以用不同 kernel size/空洞卷积扩大感受野。</li>
+</ul>
+<p>局限：</p>
+<ul>
+<li>固定窗口长度；很长的依赖需要堆很多层或加大感受野；</li>
+<li>对全局顺序、长程关系的建模不如 RNN/Transformer 自然；</li>
+<li>如果任务依赖 irregular sampling 或变长序列，需要 padding/mask，处理起来更麻烦。</li>
+</ul>
+<p>RNN 适合顺序依赖强、长度可变的序列；Transformer 的全局注意力表达能力强，但通常需要更多数据。CowNet 的 5 秒窗口、50% 重叠意味着相邻窗口共享一半样本。如果随机按窗口划分训练/测试，测试集的窗口很可能与训练集的窗口高度重叠，准确率会被高估。应该按奶牛个体或连续时间段划分，并在训练/测试之间留出时间间隔；同一头牛的不同窗口不能跨集合。如果按时间划分，还要避免用未来预测过去（视任务而定）。</p>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="四纠错与陷阱" class="level2">
+<h2 class="anchored" data-anchor-id="四纠错与陷阱">四、纠错与陷阱</h2>
+<section id="练习-8四个真实-bug" class="level3">
+<h3 class="anchored" data-anchor-id="练习-8四个真实-bug">练习 8：四个真实 bug</h3>
+<p>（a）通道顺序与展平维度。 下面两段代码分别会报什么错？请给出修正后的形状。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a>conv <span class="ot">&lt;-</span> <span class="fu">nn_conv2d</span>(<span class="dv">3</span>, <span class="dv">16</span>, <span class="dv">3</span>)</span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">1</span>, <span class="dv">64</span>, <span class="dv">64</span>, <span class="dv">3</span>)</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="fu">conv</span>(x)</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>h <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">2</span>, <span class="dv">32</span>, <span class="dv">7</span>, <span class="dv">7</span>)</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_flatten</span>(h)<span class="sc">$</span>shape</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="fu">nn_linear</span>(<span class="dv">32</span> <span class="sc">*</span> <span class="dv">7</span> <span class="sc">*</span> <span class="dv">7</span>, <span class="dv">10</span>)(<span class="fu">torch_flatten</span>(h))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（b）卷积后的尺寸。 下面这段代码在 <span class="math inline">\(28\times28\)</span> 输入上会失败。请算出实际的中间形状，指出错误，并给出两种修法。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a>conv5 <span class="ot">&lt;-</span> <span class="fu">nn_conv2d</span>(<span class="dv">1</span>, <span class="dv">16</span>, <span class="at">kernel_size =</span> <span class="dv">5</span>)</span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>pool  <span class="ot">&lt;-</span> <span class="fu">nn_max_pool2d</span>(<span class="dv">2</span>)</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>x <span class="ot">&lt;-</span> <span class="fu">torch_randn</span>(<span class="dv">1</span>, <span class="dv">1</span>, <span class="dv">28</span>, <span class="dv">28</span>)</span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>z <span class="ot">&lt;-</span> <span class="fu">pool</span>(<span class="fu">conv5</span>(x))</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="fu">nn_linear</span>(<span class="dv">16</span> <span class="sc">*</span> <span class="dv">14</span> <span class="sc">*</span> <span class="dv">14</span>, <span class="dv">10</span>)(<span class="fu">torch_flatten</span>(z, <span class="at">start_dim =</span> <span class="dv">2</span>))</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（c）冻结骨干不等于冻结 BatchNorm。 下面这段迁移学习代码把骨干的所有参数都设成 <code>requires_grad = FALSE</code>，但训练时骨干的 <code>running_mean</code>、<code>running_var</code> 仍然会变化。请解释原因，并给出一个不影响分类头 Dropout 的修法。</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (p <span class="cf">in</span> self<span class="sc">$</span>features<span class="sc">$</span>parameters) {</span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  p<span class="sc">$</span>requires_grad <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>（d）验证集上的数据增强。 有人把同一套随机裁剪、水平翻转、色彩抖动同时用在训练集和验证集上，并且在划分数据集之前用全量数据计算了归一化的均值和标准差。请指出这两个做法各自会造成什么问题，并写出正确的数据管道顺序。</p>
+<div class="callout callout-style-default callout-note callout-titled">
+<div class="callout-header d-flex align-content-center collapsed" data-bs-toggle="collapse" data-bs-target=".callout-8-contents" aria-controls="callout-8" aria-expanded="false" aria-label="Toggle callout">
+<div class="callout-icon-container">
+<i class="callout-icon"></i>
+</div>
+<div class="callout-title-container flex-fill">
+<span class="screen-reader-only">注记</span>练习 8 参考答案
+</div>
+<div class="callout-btn-toggle d-inline-block border-0 py-1 ps-1 pe-0 float-end"><i class="callout-toggle"></i></div>
+</div>
+<div id="callout-8" class="callout-8-contents callout-collapse collapse">
+<div class="callout-body-container callout-body">
+<p>（a）通道顺序与展平。</p>
+<p>第一段：</p>
+<pre class="text"><code>Given groups=1, weight of size [16, 3, 3, 3],
+expected input[1, 64, 64, 3] to have 3 channels,
+but got 64 channels instead</code></pre>
+<p><code>torch_randn(1, 64, 64, 3)</code> 被 torch 解释成 <span class="math inline">\([N=1,C=64,H=64,W=3]\)</span>，不是 <span class="math inline">\([N,H,W,C]\)</span>。卷积层看到 64 个输入通道，自然与 <code>in_channels = 3</code> 不匹配。修正：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb21"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a>x_chw <span class="ot">&lt;-</span> x<span class="sc">$</span><span class="fu">permute</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">4</span>, <span class="dv">2</span>, <span class="dv">3</span>))  <span class="co"># [1, 3, 64, 64]</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="fu">conv</span>(x_chw)<span class="sc">$</span>shape                  <span class="co"># 1 16 62 62</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>第二段：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb22"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_flatten</span>(h)<span class="sc">$</span>shape  <span class="co"># 3136</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>torch_flatten()</code> 默认从第 1 维开始展平，把 batch 也压进去了：<span class="math inline">\(2\cdot32\cdot7\cdot7=3136\)</span>。全连接层期待的是每个样本 1568 维，所以报：</p>
+<pre class="text"><code>mat1 and mat2 shapes cannot be multiplied (1x3136 and 1568x10)</code></pre>
+<p>修正：保留 batch 维，从第 2 维开始展平：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb24"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="fu">torch_flatten</span>(h, <span class="at">start_dim =</span> <span class="dv">2</span>)<span class="sc">$</span>shape  <span class="co"># 2 1568</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>R torch 的 <code>start_dim</code> 是 1-based 的；<code>start_dim = 2</code> 对应“从通道维开始”。这类错误在 CNN 里非常常见，尤其从 MLP 代码迁移过来时。</p>
+<p>（b）卷积后的尺寸。</p>
+<p><span class="math inline">\(28\times28\)</span> 经过 <span class="math inline">\(5\times5\)</span>、无填充、步长 1 的卷积：</p>
+<p><span class="math display">\[
+28-5+1=24,
+\]</span></p>
+<p>所以 <code>conv5(x)</code> 是 <span class="math inline">\([1,16,24,24]\)</span>；再经过 <span class="math inline">\(2\times2\)</span> 池化，变成 <span class="math inline">\([1,16,12,12]\)</span>。展平后每个样本是 <span class="math inline">\(16\cdot12\cdot12=2304\)</span> 维，而 <code>nn_linear(16*14*14, 10)</code> 期待 <span class="math inline">\(3136\)</span> 维：</p>
+<pre class="text"><code>mat1 and mat2 shapes cannot be multiplied (1x2304 and 3136x10)</code></pre>
+<p>两种修法：</p>
+<ol type="1">
+<li>按实际尺寸改全连接层：<code>nn_linear(16 * 12 * 12, 10)</code>。</li>
+<li>保持 <span class="math inline">\(14\times14\)</span> 的预期，给卷积加 <code>padding = 2</code>，让卷积输出仍是 <span class="math inline">\(28\times28\)</span>，池化后为 <span class="math inline">\(14\times14\)</span>：</li>
+</ol>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb26"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a>conv5 <span class="ot">&lt;-</span> <span class="fu">nn_conv2d</span>(<span class="dv">1</span>, <span class="dv">16</span>, <span class="at">kernel_size =</span> <span class="dv">5</span>, <span class="at">padding =</span> <span class="dv">2</span>)</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>不要用“把输入补到 30”之类的方式硬凑，除非你明确知道自己在改变感受野和边界行为。形状公式要写在模型定义旁边，改一层就重新算一遍。</p>
+<p>（c）冻结骨干与 BatchNorm。</p>
+<p><code>requires_grad = FALSE</code> 只阻止反向传播计算梯度，不改变模块的 <code>training</code> 标志。只要骨干仍处于训练模式，BatchNorm 就会继续用当前批次更新 <code>running_mean</code>、<code>running_var</code>；Dropout 也会继续随机置零。对于“冻结骨干、只训练头”的设置，这通常不是我们想要的：骨干的归一化统计量会被新数据的小批次带偏，评估结果也会漂移。</p>
+<p>可以这样验证：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb27"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a>bn <span class="ot">&lt;-</span> <span class="fu">nn_batch_norm2d</span>(<span class="dv">4</span>)</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a>bn<span class="sc">$</span><span class="fu">train</span>()</span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="fu">bn</span>(<span class="fu">torch_randn</span>(<span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">5</span>))</span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a>m0 <span class="ot">&lt;-</span> <span class="fu">as.numeric</span>(bn<span class="sc">$</span>running_mean)</span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (p <span class="cf">in</span> bn<span class="sc">$</span>parameters) p<span class="sc">$</span>requires_grad <span class="ot">&lt;-</span> <span class="cn">FALSE</span></span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>bn<span class="sc">$</span><span class="fu">train</span>()</span>
+<span id="cb27-8"><a href="#cb27-8" aria-hidden="true" tabindex="-1"></a><span class="fu">bn</span>(<span class="fu">torch_randn</span>(<span class="dv">8</span>, <span class="dv">4</span>, <span class="dv">5</span>, <span class="dv">5</span>) <span class="sc">*</span> <span class="dv">3</span> <span class="sc">+</span> <span class="dv">2</span>)</span>
+<span id="cb27-9"><a href="#cb27-9" aria-hidden="true" tabindex="-1"></a><span class="fu">identical</span>(m0, <span class="fu">as.numeric</span>(bn<span class="sc">$</span>running_mean))  <span class="co"># FALSE</span></span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p>一个简单的修法是在自定义模块的 <code>forward()</code> 里每次把骨干切到评估模式，而分类头仍保持训练模式：</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb28"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a>forward <span class="ot">=</span> <span class="cf">function</span>(x) {</span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a>  self<span class="sc">$</span>features<span class="sc">$</span><span class="fu">eval</span>()</span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a>  x <span class="sc">%&gt;%</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span><span class="fu">features</span>() <span class="sc">%&gt;%</span></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a>    self<span class="sc">$</span><span class="fu">head</span>()</span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div><button title="复制到剪贴板" class="code-copy-button"><i class="bi"></i></button></div>
+<p><code>self$features$eval()</code> 只会影响骨干及其子模块，不会关掉 <code>self$head</code> 里的 Dropout。实测这样调用后，骨干的 <code>running_mean</code> 不再变化，而分类头的 Dropout 仍然处于训练模式。更规范的做法是写一个 <code>train()</code> 重载，或在 luz 的 epoch 回调里设置 <code>ctx$model$features$eval()</code>；关键是不要把整个模型都设成 <code>eval()</code>，否则分类头的 Dropout 也会被关掉。</p>
+<p>（d）验证集增强与归一化泄漏。</p>
+<p>验证集上的随机增强有两个问题：</p>
+<ol type="1">
+<li>评估不可复现：同一个验证样本每次得到不同的裁剪/翻转，指标会随增强的随机性波动，早停和模型选择变得噪声很大。</li>
+<li>分布不一致：验证集应该模拟“真实部署时看到的确定性输入”，随机增强会让验证分布与测试分布不同，指标不能直接比较。</li>
+</ol>
+<p>正确做法是训练集用随机增强，验证/测试集只用确定性的 resize/中心裁剪和归一化。</p>
+<p>在划分之前用全量数据计算均值和标准差则是数据泄漏：测试集的像素统计量进入了训练管线的归一化参数，测试指标会偏乐观。正确顺序是：</p>
+<ol type="1">
+<li>先按组/分层划分训练、验证、测试；</li>
+<li>只用训练集拟合归一化的均值、标准差（以及其他有监督的预处理）；</li>
+<li>训练集做随机增强，验证/测试做确定性变换；</li>
+<li>测试集只在最终评估时使用一次。</li>
+</ol>
+<p>如果使用预训练模型，它的归一化均值/标准差是 ImageNet 的固定常数，不需要在新数据上重新估计；这不算泄漏，但输入通道顺序和数值范围必须与预训练时一致。</p>
+</div>
+</div>
+</div>
+<hr>
+<p>练习中的形状计算和参数量都可以用 <code>sapply(model$parameters, function(p) p$numel())</code> 复核。真正容易出错的地方往往不是公式，而是“以为张量的某一维是通道，实际却是宽”的静默错误；写完一个卷积块后，先打印形状，再训练。</p>
+
+
+</section>
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "已复制");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "已复制");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+<nav class="page-navigation">
+  <div class="nav-page nav-page-previous">
+      <a href="./06-regularization-exercises.html" class="pagination-link" aria-label="06 工程化实验">
+        <i class="bi bi-arrow-left-short"></i> <span class="nav-page-text">06 工程化实验</span>
+      </a>          
+  </div>
+  <div class="nav-page nav-page-next">
+      <a href="./08-rnn-lstm-exercises.html" class="pagination-link" aria-label="08 循环网络">
+        <span class="nav-page-text">08 循环网络</span> <i class="bi bi-arrow-right-short"></i>
+      </a>
+  </div>
+</nav>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

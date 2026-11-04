@@ -1,0 +1,759 @@
+# 14 扩散模型 {.unnumbered}
+
+本章从“加噪—去噪”的直觉出发，依次经过前向闭式公式、DDPM 训练目标、时间嵌入、U-Net 图像生成，最后落到 Classifier-Free Guidance 条件采样。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：前向过程与调度表；后验分布、DDPM 损失与采样方差；CFG、时间嵌入与标签丢弃。
+- 编程实践（练习 4–6）：实现调度器和 `q_sample`；实现逆向采样器并用“oracle”做代数自检，再对照 DDIM；审计 U-Net 的形状与参数量。
+- 开放思考（练习 7）：扩散模型与 GAN/VAE 的取舍、评测指标、隐私与算力。
+- 纠错与陷阱（练习 8）：标签索引与采样方差选择。
+
+建议用时约 3 小时。练习 1–3 可以在读正文时完成；练习 4、5 建议对照 `code/14_diffusion-r-logo.R` 逐行阅读；练习 6 需要实例化 U-Net 并手算一遍卷积形状。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过；扩散训练对随机种子、设备和超参数很敏感，答案里的数字用于判断量级和趋势，不应当作唯一标准。
+
+## 一、概念与推导
+
+### 练习 1：前向过程、$\bar\alpha_t$ 与信噪比
+
+设前向过程为
+
+$$
+q(x_t\mid x_{t-1})=\mathcal N\bigl(\sqrt{\alpha_t}\,x_{t-1},\ \beta_t I\bigr),
+\qquad \alpha_t=1-\beta_t,
+\qquad \bar\alpha_t=\prod_{s=1}^{t}\alpha_s .
+$$
+
+本章使用线性调度：$n_{\text{steps}}=1000$，$\beta_t$ 从 $10^{-4}$ 线性增加到 $0.02$。
+
+- （a） 证明对任意 $t$，
+  $$
+  q(x_t\mid x_0)=\mathcal N\bigl(\sqrt{\bar\alpha_t}\,x_0,\ (1-\bar\alpha_t)I\bigr),
+  $$
+  并由此写出 $x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon$。说明为什么训练时不需要真的循环加噪 $t$ 次。
+- （b） 用线性调度填写下表（保留 4–6 位有效数字）：
+
+| $t$ | $\beta_t$ | $\bar\alpha_t$ | $\sqrt{\bar\alpha_t}$ | $\sqrt{1-\bar\alpha_t}$ | $\mathrm{SNR}=\bar\alpha_t/(1-\bar\alpha_t)$ |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 |  |  |  |  |  |
+| 250 |  |  |  |  |  |
+| 500 |  |  |  |  |  |
+| 750 |  |  |  |  |  |
+| 1000 |  |  |  |  |  |
+
+- （c） 取 $x_0=(1,-0.5)$，用 $200{,}000$ 个样本模拟 $x_{250}$ 和 $x_{500}$，记录每个坐标的经验均值和标准差，与 (b) 的理论值比较。
+- （d） 解释“$t=500$ 时 $\mathrm{SNR}\approx0.085$”的含义。为什么线性调度在 $t$ 较小和较大时，信噪比的变化速度并不均匀？
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a） 对 $t$ 做归纳。$t=1$ 时由定义直接成立。若
+
+$$
+x_{t-1}=\sqrt{\bar\alpha_{t-1}}x_0+\sqrt{1-\bar\alpha_{t-1}}\,\epsilon',
+\qquad \epsilon'\sim\mathcal N(0,I),
+$$
+
+则
+
+$$
+x_t=\sqrt{\alpha_t}x_{t-1}+\sqrt{\beta_t}\,\epsilon''
+=\sqrt{\alpha_t\bar\alpha_{t-1}}x_0
++\sqrt{\alpha_t(1-\bar\alpha_{t-1})+\beta_t}\,\epsilon,
+$$
+
+其中 $\epsilon\sim\mathcal N(0,I)$ 由两个独立高斯合并而成。注意
+
+$$
+\alpha_t(1-\bar\alpha_{t-1})+\beta_t
+=\alpha_t-\alpha_t\bar\alpha_{t-1}+1-\alpha_t
+=1-\alpha_t\bar\alpha_{t-1}
+=1-\bar\alpha_t,
+$$
+
+所以 $x_t=\sqrt{\bar\alpha_t}x_0+\sqrt{1-\bar\alpha_t}\epsilon$。训练时只要抽一个 $t$、一个 $\epsilon$，就能一步算出 $x_t$；这正是“重参数化”带来的捷径，也是扩散训练能像普通监督学习一样按 batch 并行的原因。
+
+（b） 线性调度下 $\beta_t=10^{-4}+\frac{0.02-10^{-4}}{999}(t-1)$。数值如下（R 4.6.1 / torch 0.17.0 实测）：
+
+| $t$ | $\beta_t$ | $\bar\alpha_t$ | $\sqrt{\bar\alpha_t}$ | $\sqrt{1-\bar\alpha_t}$ | $\mathrm{SNR}$ |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | $1.000\times10^{-4}$ | $0.999900$ | $0.999950$ | $0.010001$ | $9997.34$ |
+| 250 | $5.060\times10^{-3}$ | $0.524085$ | $0.723937$ | $0.689866$ | $1.1012$ |
+| 500 | $1.004\times10^{-2}$ | $0.078587$ | $0.280334$ | $0.959902$ | $0.0853$ |
+| 750 | $1.502\times10^{-2}$ | $3.351\times10^{-3}$ | $0.057884$ | $0.998323$ | $3.35\times10^{-3}$ |
+| 1000 | $2.000\times10^{-2}$ | $4.036\times10^{-5}$ | $0.006353$ | $0.999980$ | $4.04\times10^{-5}$ |
+
+（c） 固定 $x_0=(1,-0.5)$，每次抽新的 $\epsilon$。以 $200{,}000$ 个样本为例：
+
+| $t$ | 理论均值 | 经验均值 | 理论标准差 | 经验标准差 |
+| ---: | ---: | ---: | ---: | ---: |
+| 250 | $(0.7239,-0.3620)$ | $(0.7216,-0.3606)$ | $0.689866$ | $(0.6890,0.6915)$ |
+| 500 | $(0.2803,-0.1402)$ | $(0.2815,-0.1376)$ | $0.959902$ | $(0.9587,0.9633)$ |
+
+理论均值是 $\sqrt{\bar\alpha_t}x_0$，理论标准差是 $\sqrt{1-\bar\alpha_t}$；经验值在小数点后两三位内吻合，差异来自有限样本。两个坐标的标准差相同，因为噪声是各向同性的。
+
+（d） $\mathrm{SNR}=0.085$ 表示在 $t=500$ 时，信号方差只有噪声方差的约 $8.5\%$；换句话说，$x_t$ 中约 $91.5\%$ 的方差来自噪声。$\mathrm{SNR}$ 从 $t=1$ 的约 $10^4$ 掉到 $t=500$ 的 $0.085$，再掉到 $t=1000$ 的约 $4\times10^{-5}$，跨越了约 8 个数量级。
+
+线性调度的问题是“两端分辨率不均匀”：$\beta_t$ 本身线性增长，但 $\bar\alpha_t$ 是累乘，前期乘的是接近 $1$ 的数，$\bar\alpha_t$ 下降很慢；到了后期，每次乘的因子明显小于 $1$，$\bar\alpha_t$ 迅速塌到 $0$。因此大量中间时间步（例如 $t=700$–$900$）花在“几乎全是噪声”的区域，而真正决定结构的低噪声区间（$t$ 较小）步数相对少。这就是后来常用余弦调度、或对 $t$ 做非均匀采样的原因；本章的 2D 优化版脚本正是换成了余弦调度。
+
+:::
+
+### 练习 2：后验分布、DDPM 损失与采样方差
+
+扩散模型的逆向过程并不直接“从 $x_t$ 猜 $x_{t-1}$”，而是在给定 $x_0$ 的条件下使用后验分布
+
+$$
+q(x_{t-1}\mid x_t,x_0).
+$$
+
+- （a） 从 $q(x_t\mid x_{t-1})=\mathcal N(\sqrt{\alpha_t}x_{t-1},\beta_t I)$ 和 $q(x_{t-1}\mid x_0)=\mathcal N(\sqrt{\bar\alpha_{t-1}}x_0,(1-\bar\alpha_{t-1})I)$ 出发，证明
+  $$
+  q(x_{t-1}\mid x_t,x_0)=\mathcal N\bigl(\tilde\mu_t,\tilde\beta_t I\bigr),
+  $$
+  并写出 $\tilde\mu_t$ 和 $\tilde\beta_t$。
+- （b） 把 $\tilde\mu_t$ 改写成只含 $x_t$、$\epsilon$ 和 $\alpha_t,\bar\alpha_t$ 的形式，证明它等于本章采样代码中的
+  $$
+  \mu_\theta=\frac{1}{\sqrt{\alpha_t}}\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon_\theta(x_t,t)\right).
+  $$
+- （c） 本章的训练损失是
+  $$
+  L=\bigl\|\epsilon-\epsilon_\theta(x_t,t)\bigr\|^2 .
+  $$
+  它和变分下界（ELBO）是什么关系？为什么可以去掉 ELBO 里与 $t$ 相关的权重？
+- （d） 后验方差 $\tilde\beta_t$ 和采样代码里的 $\beta_t$ 并不相等。填写下表，并说明本章用 $\sqrt{\beta_t}$ 作为噪声标准差是否“错”：
+
+| $t$ | $\beta_t$ | $\tilde\beta_t=\beta_t(1-\bar\alpha_{t-1})/(1-\bar\alpha_t)$ | 比值 $\tilde\beta_t/\beta_t$ |
+| ---: | ---: | ---: | ---: |
+| 2 |  |  |  |
+| 10 |  |  |  |
+| 100 |  |  |  |
+| 500 |  |  |  |
+| 1000 |  |  |  |
+
+- （e） 为什么采样循环在 $t=1$ 时不加噪声？如果错误地在 $t=1$ 也加 $\sqrt{\beta_1}z$，最终图像会有什么变化？
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a） 两个高斯相乘，配方后得到
+
+$$
+q(x_{t-1}\mid x_t,x_0)=\mathcal N\bigl(\tilde\mu_t,\tilde\beta_t I\bigr),
+$$
+
+$$
+\tilde\mu_t
+=\frac{\sqrt{\bar\alpha_{t-1}}\,\beta_t}{1-\bar\alpha_t}x_0
++\frac{\sqrt{\alpha_t}\,(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}x_t,
+$$
+
+$$
+\tilde\beta_t=\frac{\beta_t\,(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}.
+$$
+
+这是标准 DDPM 的后验；$\tilde\beta_t$ 只由调度表决定，不需要学习。
+
+（b） 由前向闭式解，
+
+$$
+x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\epsilon}{\sqrt{\bar\alpha_t}}.
+$$
+
+代入 $\tilde\mu_t$：
+
+$$
+\tilde\mu_t
+=\frac{\sqrt{\bar\alpha_{t-1}}\beta_t}{1-\bar\alpha_t}
+\cdot\frac{x_t-\sqrt{1-\bar\alpha_t}\epsilon}{\sqrt{\bar\alpha_t}}
++\frac{\sqrt{\alpha_t}(1-\bar\alpha_{t-1})}{1-\bar\alpha_t}x_t.
+$$
+
+利用 $\bar\alpha_t=\alpha_t\bar\alpha_{t-1}$，$x_t$ 的系数为
+
+$$
+\frac{\beta_t}{\sqrt{\alpha_t}(1-\bar\alpha_t)}
++\frac{\alpha_t(1-\bar\alpha_{t-1})}{\sqrt{\alpha_t}(1-\bar\alpha_t)}
+=\frac{\beta_t+\alpha_t(1-\bar\alpha_{t-1})}{\sqrt{\alpha_t}(1-\bar\alpha_t)}
+=\frac{1}{\sqrt{\alpha_t}},
+$$
+
+$\epsilon$ 的系数为
+
+$$
+-\frac{\sqrt{\bar\alpha_{t-1}}\beta_t\sqrt{1-\bar\alpha_t}}
+{\sqrt{\bar\alpha_t}(1-\bar\alpha_t)}
+=-\frac{\beta_t}{\sqrt{\alpha_t}\sqrt{1-\bar\alpha_t}}.
+$$
+
+于是
+
+$$
+\tilde\mu_t=\frac{1}{\sqrt{\alpha_t}}
+\left(x_t-\frac{\beta_t}{\sqrt{1-\bar\alpha_t}}\epsilon\right).
+$$
+
+把 $\epsilon$ 换成网络预测 $\epsilon_\theta(x_t,t)$，就得到采样代码里的均值。
+
+（c） 扩散模型的 ELBO 可以写成
+
+$$
+\mathrm{ELBO}=\mathbb E\Bigl[
+\log\frac{q(x_T\mid x_0)}{p(x_T)}
+-\sum_{t>1}\mathrm{KL}\bigl(q(x_{t-1}\mid x_t,x_0)\,\|\,p_\theta(x_{t-1}\mid x_t)\bigr)
+-\log p_\theta(x_0\mid x_1)
+\Bigr].
+$$
+
+在 $q(x_{t-1}\mid x_t,x_0)$ 为高斯、$p_\theta$ 也取高斯且方差固定时，每一项 KL 都正比于
+
+$$
+\frac{1}{2\tilde\beta_t}\bigl\|\tilde\mu_t-\mu_\theta(x_t,t)\bigr\|^2 .
+$$
+
+把 $\tilde\mu_t$ 用 $\epsilon$ 参数化后，分子正比于 $\|\epsilon-\epsilon_\theta\|^2$，权重是
+
+$$
+\frac{\beta_t^2}{2\tilde\beta_t\alpha_t(1-\bar\alpha_t)} .
+$$
+
+DDPM 的简化损失直接丢掉这个与 $t$ 有关的权重，对每项等权。实践上这会让模型更重视“难学的中间时间步”，生成质量通常更好；代价是它不再是严格的 ELBO，而是重新加权后的变分目标。所以“训练损失是 MSE”并不等于“扩散模型在最大化似然”，两者只共享同一个去噪方向。
+
+（d） 数值如下：
+
+| $t$ | $\beta_t$ | $\tilde\beta_t$ | 比值 |
+| ---: | ---: | ---: | ---: |
+| 2 | $1.199\times10^{-4}$ | $5.45\times10^{-5}$ | $0.4547$ |
+| 10 | $2.793\times10^{-4}$ | $2.382\times10^{-4}$ | $0.8528$ |
+| 100 | $2.072\times10^{-3}$ | $2.035\times10^{-3}$ | $0.9819$ |
+| 500 | $1.004\times10^{-2}$ | $1.003\times10^{-2}$ | $0.9991$ |
+| 1000 | $2.000\times10^{-2}$ | $2.000\times10^{-2}$ | $1.0000$ |
+
+DDPM 论文实际给出两种采样方差：固定大方差 $\sigma_t^2=\beta_t$，或后验方差 $\sigma_t^2=\tilde\beta_t$。两者在 $t$ 较大时几乎相同（$t=500$ 时比值 $0.9991$），差别主要在 $t$ 很小的时候：$t=2$ 时后验方差只有 $\beta_t$ 的 $45\%$。本章代码用的是固定大方差 $\sqrt{\beta_t}$，这是 DDPM 中合法的一种选择，不是错误；但它意味着采样时的随机扰动比“精确后验”略大，低噪声阶段的细节会更“跳”。如果想让采样更贴近后验，把
+
+```r
+sigma <- torch_sqrt(beta)
+```
+
+改成
+
+```r
+sigma <- torch_sqrt(beta * (1 - alphas_bar[t_idx - 1]) / (1 - alphas_bar[t_idx]))
+```
+
+即可；注意 $t=1$ 时要单独处理，不能索引 `t_idx - 1 = 0`。
+
+（e） 逆向过程的目标是从 $x_1$ 得到 $x_0$。在 $t=1$ 时，后验 $q(x_0\mid x_1,x_0)$ 退化成一个点质量（因为 $x_1$ 已经由 $x_0$ 和 $\epsilon$ 完全确定，且 $\bar\alpha_1$ 接近 $1$），所以最后一步只取均值、不加随机噪声。若在 $t=1$ 仍加 $\sqrt{\beta_1}z=\sqrt{10^{-4}}z$，每个像素会多出约 $0.01$ 量级的高斯扰动；单看很小，但它会叠加在已经成形的笔画上，表现为轻微颗粒感。更严重的是，如果调度表在 $t=1$ 的 $\beta_1$ 不小（例如某些自定义调度），这一步会把刚恢复的结构重新打散。工程上一般写 `if (t > 1) { ... } else { mean }`，而不是依赖 $\beta_1$ 很小。
+
+:::
+
+### 练习 3：CFG、时间嵌入与标签丢弃
+
+本章的条件生成使用 Classifier-Free Guidance（CFG）。设无条件预测为 $\epsilon_u=\epsilon_\theta(x_t,t,y_\emptyset)$，有条件预测为 $\epsilon_c=\epsilon_\theta(x_t,t,y)$。
+
+- （a） 证明 CFG 公式
+  $$
+  \hat\epsilon=\epsilon_u+w(\epsilon_c-\epsilon_u)
+  $$
+  等价于对“分数函数”做同样的线性外推：
+  $$
+  \hat s=s_u+w(s_c-s_u),\qquad s=\nabla_{x_t}\log q(x_t).
+  $$
+  提示：$\epsilon_\theta(x_t,t)\approx-\sqrt{1-\bar\alpha_t}\,s(x_t)$。
+- （b） 取 $\epsilon_u=(0.2,-0.4)$、$\epsilon_c=(0.6,0.2)$，填写 $w=0,1,2,4$ 时的 $\hat\epsilon$，并解释每个 $w$ 的生成行为。
+- （c） 训练时以 $10\%$ 的概率把真实标签替换成空标签（本章代码里是 11）。解释为什么一个网络能同时学会 $p(x\mid y)$ 和 $p(x)$；空标签的 embedding 行是否参与梯度更新？
+- （d） 正文说混合向量 $\mathbf v_{ctx}$ “通常作为 Scale（缩放）和 Shift（平移）参数作用于特征图”，但本章 `Block` 的代码是把时间/条件向量加到一个卷积特征图上。这两种注入方式有什么差别？本章实际用的是哪一种？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a） 扩散模型里，噪声预测与分数函数的关系是
+
+$$
+\epsilon_\theta(x_t,t)\approx-\sqrt{1-\bar\alpha_t}\,\nabla_{x_t}\log q(x_t),
+$$
+
+因为 $q(x_t\mid x_0)=\mathcal N(\sqrt{\bar\alpha_t}x_0,(1-\bar\alpha_t)I)$，对 $x_t$ 求对数密度的梯度会得到 $-(x_t-\sqrt{\bar\alpha_t}x_0)/(1-\bar\alpha_t)$，而 $\epsilon=(x_t-\sqrt{\bar\alpha_t}x_0)/\sqrt{1-\bar\alpha_t}$，两者只差一个 $-\sqrt{1-\bar\alpha_t}$ 因子。于是
+
+$$
+\hat\epsilon
+=-\sqrt{1-\bar\alpha_t}\bigl[s_u+w(s_c-s_u)\bigr]
+=\epsilon_u+w(\epsilon_c-\epsilon_u).
+$$
+
+所以 CFG 既可以写成噪声的线性外推，也可以写成分数的线性外推；后者更接近“隐式分类器梯度”的解释：$s_c-s_u$ 指向“更像类别 $y$”的方向，$w$ 放大这个方向。
+
+（b） 逐分量计算：
+
+| $w$ | $\hat\epsilon$ | 行为 |
+| ---: | ---: | :--- |
+| 0 | $(0.20,-0.40)$ | 完全无条件，忽略标签 |
+| 1 | $(0.60,0.20)$ | 标准条件生成，$\hat\epsilon=\epsilon_c$ |
+| 2 | $(1.00,0.80)$ | 放大条件方向，类别一致性更强、多样性下降 |
+| 4 | $(1.80,2.00)$ | 过度引导，容易出现饱和、颜色/笔画失真 |
+
+注意 $w=0$ 不是“没有条件”，而是“只用无条件分支”；$w=1$ 也不是“没有引导”，而是“标准条件预测”。本章示例用 $w=2.0$，处在“更强一致性、略损多样性”的区间。
+
+（c） 训练时每个样本的标签以 $10\%$ 概率变成空标签 $\emptyset$。于是同一个网络在不同 batch 中既看到 $(x_t,t,y)$，也看到 $(x_t,t,\emptyset)$：
+
+- 看到真实 $y$ 时，梯度让网络利用 $y$ 的 embedding 去预测噪声，学到 $p(x\mid y)$；
+- 看到 $\emptyset$ 时，网络只能依靠 $x_t$ 和 $t$，学到 $p(x)$。
+
+空标签的 embedding 行参与梯度更新：它和真实标签的 embedding 在同一个 `nn_embedding` 矩阵里，被替换成 11 的样本会反传到第 11 行。正因为如此，第 11 行才能学到一个有意义的“无条件向量”，而不是随机初始化后一直不动。10% 是一个折中：太低，无条件分支学不好，CFG 的 $\epsilon_u$ 不可靠；太高，条件分支缺少监督。常见范围是 5%–20%。
+
+（d） 两种注入方式的差别：
+
+- 加法（Additive）：$h\leftarrow h+\mathrm{MLP}(c)$，条件向量对每个通道做一次平移。本章 `Block` 用的是
+  ```r
+  time_h <- self$time_mlp(t_emb)$unsqueeze(-1)$unsqueeze(-1)
+  h <- h + time_h
+  ```
+  即先把 `(B, time_dim)` 投影到 `(B, dim)`，再广播到 `(B, dim, 1, 1)` 后相加。它只改变每个通道的偏置，不改变特征的尺度。
+- Scale & Shift（AdaGN/FiLM）：$h\leftarrow h\cdot(1+\gamma(c))+\delta(c)$，条件向量同时控制每个通道的缩放和平移，表达能力更强，Stable Diffusion 一类模型常用。
+
+本章代码实际用的是加法，不是 Scale/Shift。正文那句话描述的是更一般的条件注入方案，和紧接着给出的 `ctx_emb <- t_emb + y_emb`、`h + time_h` 并不完全对应。阅读时以代码为准；如果想升级成 FiLM，需要把 `time_mlp` 的输出维度改成 `2 * dim`，再拆成 $\gamma$ 和 $\delta$。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：实现调度器与 `q_sample`
+
+本练习不训练网络，只把前向过程写成可复用函数，并用一个 4D 张量检查广播。
+
+- （a） 写一个 `make_schedule(n_steps = 1000, beta_start = 1e-4, beta_end = 0.02)`，返回 `betas`、`alphas`、`alphas_bar` 三个长度为 `n_steps` 的一维张量。
+- （b） 写一个 `extract(a, t, x_shape)`，把长度 `B` 的时间索引变成 `(B, 1, 1, 1)`，以便和 `(B, C, H, W)` 广播。
+- （c） 写 `q_sample(x0, t, schedule)`，返回 `list(xt, noise)`。用 `x0` 形状 `(4, 1, 28, 28)`、`t = c(1, 250, 500, 1000)` 测试，打印 `xt` 的形状和每个样本对应的两个系数。
+- （d） 把 `t` 改成 `torch_tensor(c(1, 250, 500, 1000))`（默认是浮点），会发生什么？为什么本书代码要显式 `$to(dtype = torch_long())`？
+- （e） 如果误把 `extract` 写成 `a[t]$view(c(-1, 1))`，在 2D 点云上能跑，在 MNIST 上会怎样？
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）–（c） 完整代码：
+
+```r
+library(torch)
+
+make_schedule <- function(n_steps = 1000,
+                          beta_start = 1e-4,
+                          beta_end = 0.02) {
+  betas <- torch_linspace(beta_start, beta_end, n_steps)
+  alphas <- 1 - betas
+  alphas_bar <- torch_cumprod(alphas, dim = 1)
+  list(betas = betas, alphas = alphas, alphas_bar = alphas_bar)
+}
+
+extract <- function(a, t, x_shape) {
+  batch_size <- t$size(1)
+  t_long <- t$to(dtype = torch_long())
+  out <- a[t_long]
+  out$view(c(batch_size, 1, 1, 1))
+}
+
+q_sample <- function(x0, t, schedule) {
+  noise <- torch_randn_like(x0)
+  sqrt_ab <- extract(torch_sqrt(schedule$alphas_bar), t, x0$shape)
+  sqrt_one_minus_ab <- extract(torch_sqrt(1 - schedule$alphas_bar), t, x0$shape)
+  xt <- sqrt_ab * x0 + sqrt_one_minus_ab * noise
+  list(xt = xt, noise = noise)
+}
+
+set.seed(42)
+torch_manual_seed(42)
+s <- make_schedule()
+x0 <- torch_randn(4, 1, 28, 28)
+t <- torch_tensor(c(1, 250, 500, 1000), dtype = torch_long())
+out <- q_sample(x0, t, s)
+
+cat("xt shape:", paste(out$xt$shape, collapse = " x "), "\n")
+# xt shape: 4 x 1 x 28 x 28
+
+for (i in 1:4) {
+  ti <- as.integer(t[i])
+  sa <- sqrt(as.numeric(s$alphas_bar[ti]))
+  so <- sqrt(1 - as.numeric(s$alphas_bar[ti]))
+  cat(sprintf("t=%4d  sqrt(ab)=%.6f  sqrt(1-ab)=%.6f\n", ti, sa, so))
+}
+```
+
+参考输出：
+
+```text
+xt shape: 4 x 1 x 28 x 28
+t=   1  sqrt(ab)=0.999950  sqrt(1-ab)=0.010001
+t= 250  sqrt(ab)=0.723937  sqrt(1-ab)=0.689866
+t= 500  sqrt(ab)=0.280334  sqrt(1-ab)=0.959902
+t=1000  sqrt(ab)=0.006353  sqrt(1-ab)=0.999980
+```
+
+（d） R torch 的张量索引要求整数类型；用浮点 `t` 去索引会报错（不同版本报错文案略有差异，常见的是 “index must be an integer” 一类）。`t$to(dtype = torch_long())` 把 `1.0` 变成 `1L`，同时也避免 MPS 后端对索引类型的额外限制。训练循环里 `torch_randint(..., dtype = torch_long())` 直接生成整数，所以通常不需要再转；但从外部读入或从其他张量计算出来的 `t` 最好显式转换。
+
+（e） `a[t]$view(c(-1, 1))` 得到的是 `(B, 1)`，只能和 `(B, 2)` 的 2D 点云广播；MNIST 的 `x0` 是 `(B, 1, 28, 28)`，`(B, 1)` 与 `(B, 1, 28, 28)` 的尾维对不齐（R torch 从右往左广播：`1` 对 `28` 可以，但 `B` 对 `1` 再对 `28` 时，`B` 会落到 `28` 的位置，形状不匹配或产生错误结果）。正确做法是 `view(c(B, 1, 1, 1))`，或者像本书的 `extract` 一样根据 `x_shape` 的长度生成。一个实用的检查是：`sqrt_ab$shape` 应该等于 `c(B, rep(1, length(x_shape) - 1))`。
+
+:::
+
+### 练习 5：逆向采样器与 DDIM 自检
+
+本练习用“oracle 噪声预测器”检查采样公式的代数是否正确：它不是一个训练好的模型，而是一个知道真实 $x_0$ 和真实 $\epsilon$ 的闭包，用来验证你的采样器能否把 $x_T$ 还原回 $x_0$。
+
+- （a） 实现 `p_sample(eps_fn, xt, t_idx, schedule, sigma = c("posterior", "fixed"))`，其中 `eps_fn(xt, t_idx)` 返回噪声预测；`sigma = "fixed"` 用 $\sqrt{\beta_t}$，`"posterior"` 用 $\sqrt{\tilde\beta_t}$。要求 `t_idx = 1` 时只返回均值。
+- （b） 取 $x_0=(0.8,-0.6)$，抽一个 $\epsilon_0$，构造
+  $$
+  x_T=\sqrt{\bar\alpha_T}x_0+\sqrt{1-\bar\alpha_T}\epsilon_0,
+  $$
+  定义 oracle
+  $$
+  \epsilon_{\text{oracle}}(x_t,t)=\frac{x_t-\sqrt{\bar\alpha_t}x_0}{\sqrt{1-\bar\alpha_t}},
+  $$
+  从 $T=1000$ 倒推到 $1$。固定种子后，报告最终结果与 $x_0$ 的最大绝对误差。两种 `sigma` 各跑一次。
+- （c） 实现确定性的 DDIM 采样：给定 $\epsilon_\theta$，
+  $$
+  \hat x_0=\frac{x_t-\sqrt{1-\bar\alpha_t}\,\epsilon_\theta}{\sqrt{\bar\alpha_t}},
+  $$
+  $$
+  x_{t'}=\sqrt{\bar\alpha_{t'}}\,\hat x_0+\sqrt{1-\bar\alpha_{t'}}\,\epsilon_\theta,
+  $$
+  其中 $t'$ 是下一个（可以跳过的）时间步。用 20、50、100 步跑同一个 oracle，报告误差。注意最后一步应直接返回 $\hat x_0$，而不是再乘 $\sqrt{\bar\alpha_1}$。
+- （d） 解释 (b) 和 (c) 的误差量级说明了什么；为什么 DDPM 需要 1000 步、DDIM 可以 20–50 步，而两者在 oracle 下都能还原 $x_0$。
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a） 采样器：
+
+```r
+p_sample <- function(eps_fn, xt, t_idx, schedule,
+                     sigma = c("posterior", "fixed")) {
+  sigma <- match.arg(sigma)
+  beta_t <- schedule$betas[t_idx]
+  alpha_t <- schedule$alphas[t_idx]
+  ab_t <- schedule$alphas_bar[t_idx]
+
+  eps <- eps_fn(xt, t_idx)
+  mean <- (1 / torch_sqrt(alpha_t)) *
+    (xt - (beta_t / torch_sqrt(1 - ab_t)) * eps)
+
+  if (t_idx == 1) return(mean)
+
+  s2 <- if (sigma == "fixed") {
+    beta_t
+  } else {
+    beta_t * (1 - schedule$alphas_bar[t_idx - 1]) / (1 - ab_t)
+  }
+  mean + torch_sqrt(s2) * torch_randn_like(xt)
+}
+```
+
+（b） oracle 与主循环（沿用练习 4 的 `make_schedule`）：
+
+```r
+set.seed(7)
+torch_manual_seed(7)
+s <- make_schedule(1000)
+x0 <- torch_tensor(matrix(c(0.8, -0.6), ncol = 2))
+eps0 <- torch_randn_like(x0)
+
+xT <- torch_sqrt(s$alphas_bar[1000]) * x0 +
+  torch_sqrt(1 - s$alphas_bar[1000]) * eps0
+
+oracle <- function(xt, t_idx) {
+  (xt - torch_sqrt(s$alphas_bar[t_idx]) * x0) /
+    torch_sqrt(1 - s$alphas_bar[t_idx])
+}
+
+for (type in c("fixed", "posterior")) {
+  torch_manual_seed(99)
+  x <- xT$clone()
+  for (t in seq(1000, 1)) {
+    x <- p_sample(oracle, x, t, s, sigma = type)
+  }
+  cat(type, "final:", as.numeric(x), "max error:",
+      as.numeric((x - x0)$abs()$max()), "\n")
+}
+```
+
+参考输出（float32）：
+
+```text
+fixed final: 0.800001 -0.600001 max error: 1.19e-06
+posterior final: 0.800000 -0.600001 max error: 1.07e-06
+```
+
+两种方差选择下误差都在 $10^{-6}$ 量级，说明均值公式和 `t=1` 的终止条件写对了。中间轨迹会不同（固定方差在低噪声阶段扰动更大），但最终都收敛到 $x_0$，因为 oracle 每一步都给出了精确的 $\epsilon$。
+
+（c） DDIM：
+
+```r
+ddim_sample <- function(eps_fn, xT, schedule, n_steps = 50) {
+  ts <- unique(round(seq(1000, 1, length.out = n_steps)))
+  x <- xT$clone()
+
+  for (i in seq_along(ts)) {
+    t_idx <- ts[i]
+    eps <- eps_fn(x, t_idx)
+    x0_hat <- (x - torch_sqrt(1 - schedule$alphas_bar[t_idx]) * eps) /
+      torch_sqrt(schedule$alphas_bar[t_idx])
+
+    if (i == length(ts)) {
+      x <- x0_hat
+    } else {
+      t_next <- ts[i + 1]
+      x <- torch_sqrt(schedule$alphas_bar[t_next]) * x0_hat +
+        torch_sqrt(1 - schedule$alphas_bar[t_next]) * eps
+    }
+  }
+  x
+}
+
+for (k in c(20, 50, 100)) {
+  x <- ddim_sample(oracle, xT, s, n_steps = k)
+  cat(k, "steps max error:", as.numeric((x - x0)$abs()$max()), "\n")
+}
+```
+
+参考输出：
+
+```text
+20 steps max error: 0
+50 steps max error: 0
+100 steps max error: 0
+```
+
+如果最后一步仍然写成 `sqrt(ab[1]) * x0_hat + sqrt(1 - ab[1]) * eps`，误差会变成约 $0.019$（对 $x_0=(0.8,-0.6)$），因为 $\bar\alpha_1=0.9999$ 仍留了 $0.01$ 的 $\epsilon$ 权重。这个“最后一步”细节就是 DDIM 实现里最常见的坑之一。
+
+（d） 在 oracle 下，DDPM 和 DDIM 都能精确还原 $x_0$：前者每步都注入与后验匹配的噪声，后者用同一个 $\epsilon_\theta$ 直接估计 $\hat x_0$，两者在代数上都是精确的。误差 $10^{-6}$ 只来自 float32 舍入。
+
+DDPM 需要 1000 步，是因为它的随机采样每一步只走一个很小的 $t$，且每步都重新注入噪声；步长必须足够小，才能让高斯近似成立。DDIM 利用“同一个 $\epsilon$ 同时给出 $\hat x_0$ 和方向”这一点，把逆向过程改写成非马尔可夫、确定性的更新，因此可以一次跨多个 $t$。20–50 步时，oracle 仍然精确，但真实模型在跨大步时会累积误差；所以实际 DDIM 常用 20–50 步，再少就会明显掉质量。
+
+:::
+
+### 练习 6：U-Net 的形状与参数量审计
+
+本章的 `SimpleUNet` 在 `base_dim = 32`、`time_dim = 32`、输入 `(B, 1, 28, 28)` 下运行。
+
+- （a） 实例化模型，用一个随机 batch（`B=2`）前向一次，打印 `x1, h1, h2, h3, h_mid, h_up1, h_cat1, h_res1, h_up2, h_cat2, h_res2, out` 的形状。你可以临时在 `forward` 里加打印，或者复制类定义后加一个 `verbose` 参数。
+- （b） 计算总参数量，并填写下表（`dim` 是卷积块的通道数）：
+
+| 模块 | 参数量 |
+| :--- | ---: |
+| `time_mlp` |  |
+| `init_conv` |  |
+| `down1` |  |
+| `to_down2` |  |
+| `down2` |  |
+| `to_down3` |  |
+| `down3` |  |
+| `mid1` |  |
+| `mid2` |  |
+| `up1` |  |
+| `up_block1` |  |
+| `up2` |  |
+| `up_block2` |  |
+| `out_conv` |  |
+| 合计 |  |
+
+- （c） 推导一个 `Block(dim, time_dim)` 的参数量公式，并用它验证 `Block(32, 32)` 和 `Block(128, 32)` 的数值。
+- （d） 本章正文的形状表里，`h_res1` 和 `h_res2` 的通道数是多少？你的实测值是多少？哪两行需要修正？
+- （e） 如果把 `base_dim` 从 32 改成 64，总参数量大约变成多少？不需要精确到个位，给出量级和主要来源。
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a） 先实例化并前向一次（前提：已加载 `code/14_diffusion-mnist-unet.R` 第 1–4 节的类定义，不要运行后面的训练循环）：
+
+```r
+model <- SimpleUNet()
+n_params <- function(m) sum(sapply(m$parameters, function(p) p$numel()))
+cat("total params:", n_params(model), "\n")
+# total params: 1066945
+
+out <- model(
+  torch_randn(2, 1, 28, 28),
+  torch_randint(1, 1001, size = 2, dtype = torch_long())
+)
+cat("out shape:", paste(out$shape, collapse = " x "), "\n")
+# out shape: 2 x 1 x 28 x 28
+```
+
+要打印中间变量，最直接的办法是在 `forward` 里临时加一个 `verbose` 参数（方法定义在 `code/14_diffusion-mnist-unet.R` 的 `SimpleUNet` 中）：
+
+```r
+# 1. 先把 forward 的最后一行改成 out <- self$out_conv(h_res2)
+# 2. 再在函数末尾插入下面这段（forward 的签名改为 function(x, t, verbose = FALSE)）
+if (verbose) {
+  for (nm in c("x1", "h1", "h2", "h3", "h_mid",
+               "h_up1", "h_cat1", "h_res1", "h_up2", "h_cat2", "h_res2", "out")) {
+    cat(sprintf("%-7s %s\n", nm, paste(get(nm)$shape, collapse = " x ")))
+  }
+}
+```
+
+实测形状（`B=2`）：
+
+| 变量 | 形状 |
+| :--- | :--- |
+| `x1` | `2 x 32 x 28 x 28` |
+| `h1` | `2 x 32 x 28 x 28` |
+| `h2` | `2 x 64 x 14 x 14` |
+| `h3` | `2 x 128 x 7 x 7` |
+| `h_mid` | `2 x 128 x 7 x 7` |
+| `h_up1` | `2 x 64 x 14 x 14` |
+| `h_cat1` | `2 x 128 x 14 x 14` |
+| `h_res1` | `2 x 128 x 14 x 14` |
+| `h_up2` | `2 x 32 x 28 x 28` |
+| `h_cat2` | `2 x 64 x 28 x 28` |
+| `h_res2` | `2 x 64 x 28 x 28` |
+| `out` | `2 x 1 x 28 x 28` |
+
+关键点是：`up_block1 <- Block(base_dim * 4, time_dim)` 的输入通道是 `128`，`Block` 内部是 `Conv(dim, dim)`，所以输出仍然是 `128` 通道；`up_block2 <- Block(base_dim * 2, time_dim)` 输出 `64` 通道。`Block` 不会把通道数减半，减半发生在它前面的转置卷积 `up1`/`up2` 上。
+
+（b） 按模块统计（`n_params <- function(m) sum(sapply(m$parameters, function(p) p$numel()))`）：
+
+| 模块 | 参数量 |
+| :--- | ---: |
+| `time_mlp` | 8,352 |
+| `init_conv` | 320 |
+| `down1` | 10,368 |
+| `to_down2` | 32,832 |
+| `down2` | 39,168 |
+| `to_down3` | 131,200 |
+| `down3` | 152,064 |
+| `mid1` | 152,064 |
+| `mid2` | 152,064 |
+| `up1` | 131,136 |
+| `up_block1` | 152,064 |
+| `up2` | 65,568 |
+| `up_block2` | 39,168 |
+| `out_conv` | 577 |
+| 合计 | 1,066,945 |
+
+（c） 一个 `Block(dim, time_dim)` 包含：
+
+- `nn_conv2d(dim, dim, 3, padding = 1)`：$3\times3\times\mathrm{dim}\times\mathrm{dim}+\mathrm{dim}=9\,\mathrm{dim}^2+\mathrm{dim}$；
+- `nn_group_norm(32, dim)`：每个通道一个 $\gamma$ 和一个 $\beta$，共 $2\,\mathrm{dim}$；
+- `time_mlp = nn_sequential(nn_silu(), nn_linear(time_dim, dim))`：$\mathrm{time\_dim}\times\mathrm{dim}+\mathrm{dim}$；
+- SiLU 无参数。
+
+所以
+
+$$
+\mathrm{params}(\mathrm{Block})=9\,\mathrm{dim}^2+\mathrm{time\_dim}\cdot\mathrm{dim}+4\,\mathrm{dim}.
+$$
+
+代入 `dim=32, time_dim=32`：$9\times1024+1024+128=10{,}368$；代入 `dim=128`：$9\times16384+4096+512=152{,}064$，与上表一致。
+
+（d） 正文表写 `h_res1 = (128, 64, 14, 14)`、`h_res2 = (128, 32, 28, 28)`；实测分别是 `(128, 128, 14, 14)` 和 `(128, 64, 28, 28)`。需要修正的是“融合1”和“融合2”两行。原因同上：`Block` 保持通道数不变，`h_cat1` 是 `64+64=128` 通道，`h_res1` 仍是 128；`h_cat2` 是 `32+32=64` 通道，`h_res2` 仍是 64。
+
+（e） `base_dim` 翻倍后，所有卷积的通道数翻倍，参数量大致按 $4$ 倍增长（卷积权重正比于输入通道×输出通道）。`Block` 的参数量从约 $10^4$ 变成约 $4\times10^4$（32→64），从约 $1.52\times10^5$ 变成约 $6.1\times10^5$（128→256）。总参数量大致从 $1.07\times10^6$ 增加到 $4.2\times10^6$ 量级。主要来源是 `down3`、`mid1`、`mid2`、`up_block1` 这些 128 通道的块，以及 `to_down3`、`up1` 这些跨通道卷积。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：扩散模型的能力边界与评测
+
+本章用 2D 点云和 MNIST 演示了 DDPM 与 CFG。把这两节放回生成模型的全局里，回答下面四个问题：
+
+- （a） 从训练稳定性、样本质量、模式覆盖、采样成本四个维度，比较扩散模型、GAN 和 VAE。各举一个本章或前两章的具体现象作为依据。
+- （b） FID 和 Inception Score 各衡量什么、有什么局限？如果不想依赖 ImageNet 预训练特征，可以用什么替代指标？为什么比较 FID 时必须同时报告采样步数、引导尺度 $w$ 和样本数？
+- （c） 本章说扩散模型可以生成“统计特征高度一致但完全不映射到任何真实个体”的合成数据。这个说法在什么条件下成立？举出两种扩散模型可能泄露训练数据的机制，并说明对应的缓解手段。
+- （d） 本章的 MNIST 采样需要 1000 步网络前向；DDIM 可以压到 20–50 步。除了“换采样器”，还有哪些降低推理成本的办法？各自代价是什么？
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a） 四个维度的对比：
+
+| 维度 | 扩散模型 | GAN | VAE |
+| :--- | :--- | :--- | :--- |
+| 训练稳定性 | 高：MSE 回归，没有对抗博弈；本章 2D 模型用 AdamW + 梯度裁剪即可稳定训练 | 低：判别器/生成器平衡敏感，容易出现梯度消失或模式坍塌（第 13 章） | 高：ELBO 优化稳定，但需要平衡重建项与 KL 项（第 12 章） |
+| 样本质量 | 高：本章 MNIST 的 1000 步采样能生成清晰数字；大规模模型接近 SOTA | 高但脆弱：DCGAN/WGAN-GP 能出清晰头像，但依赖调参 | 中：VAE 的 MSE/BCE 重建目标倾向产生模糊样本 |
+| 模式覆盖 | 较好：似然/去噪目标倾向覆盖整个分布；但低 $w$ 或欠训练仍可能漏模式 | 较差：模式坍塌是 GAN 的经典问题，WGAN 只能缓解不能根除 | 中等：KL 项会鼓励覆盖，但后验坍缩会限制表达能力 |
+| 采样成本 | 高：每步一次完整网络前向，1000 步就是 1000 次；DDIM 可降到 20–50 次 | 低：一次前向即可出样本 | 低：一次解码器前向 |
+
+具体依据：第 13 章 GAN 的判别器过强时生成器梯度消失、WGAN 需要 Lipschitz 约束；第 12 章 VAE 的重建损失在 MNIST 上产生偏模糊的样本；本章扩散模型的训练损失是简单的 MSE，且 2D 点云能从纯噪声收敛到 R Logo 形状。
+
+（b） FID 比较真实分布和生成分布在 Inception 特征空间中的均值与协方差：
+
+$$
+\mathrm{FID}=\|\mu_r-\mu_g\|^2+\mathrm{Tr}\bigl(\Sigma_r+\Sigma_g-2(\Sigma_r\Sigma_g)^{1/2}\bigr).
+$$
+
+它衡量“特征分布的距离”，越低越好；IS 衡量“生成样本被分类器判为某一类的置信度”和“类别多样性”，越高越好。局限：
+
+- 两者都依赖 ImageNet 预训练的 Inception 网络，对 MNIST、医学图像、点云等域外数据不一定有意义；
+- FID 对样本数、分辨率、预处理敏感，小样本时估计有偏；
+- IS 不比较真实分布，且可以被“生成少数高置信类别”刷高，不能单独反映模式覆盖。
+
+不依赖预训练特征的替代方案：precision/recall（或 density/coverage）直接在特征空间或像素空间衡量“生成样本有多少落在真实流形附近、覆盖了多少真实模式”；2D 点云还可以用最大均值差异（MMD）、Wasserstein 距离或网格上的总变差。比较 FID 时必须固定采样步数、$w$、样本数和预处理，因为 DDIM 50 步与 DDPM 1000 步的 FID 不可直接比较，$w$ 增大会提升一致性但降低多样性，样本数少会让 FID 的方差变大。
+
+（c） “合成数据不映射到真实个体”只在以下条件同时成立时才有把握：
+
+1. 模型没有记住训练样本（小数据、过参数化、训练过久时容易记住）；
+2. 生成过程没有以训练样本为条件（例如没有使用 image-to-image、inpainting 或检索增强）；
+3. 有独立的隐私审计，而不是只看“看起来不像”。
+
+两种泄露机制：
+
+- 记忆（memorization）：模型在训练集很小或重复样本很多时，可能在高 $w$、低噪声阶段复现训练图像。缓解：去重、限制模型容量/训练轮数、对生成结果做最近邻检索审计，发现与训练样本过近就丢弃。
+- 成员推断（membership inference）：攻击者利用模型对训练样本和未见过样本的损失/似然差异，判断某个个体是否在训练集中。缓解：差分隐私训练（DP-SGD）、对输出加噪声、限制查询次数，或只发布聚合统计而不是原始生成样本。
+
+所以“扩散模型生成合成数据”是一个工程流程，不是一句“不映射到真实个体”就能保证的；涉及个人数据时，应把隐私审计和合规评审放在发布之前。
+
+（d） 降低推理成本的办法：
+
+- 更快采样器：DDIM、DPM-Solver、Euler/Heun 等，把 1000 步降到 10–50 步；代价是步数太少时细节和多样性下降。
+- 蒸馏：把多步教师模型的轨迹蒸馏到少步学生模型（progressive distillation、consistency models）；代价是额外的训练成本和教师模型依赖。
+- 缓存/复用：在相邻时间步复用部分特征或注意力（如 DeepCache）；代价是实现复杂，可能引入伪影。
+- 模型压缩：剪枝、量化、低秩适配；代价是精度损失，且要和采样器一起调。
+- 条件化/局部生成：只在高分辨率阶段做精修，低分辨率阶段用更小模型；代价是架构复杂度。
+
+对本章的 MNIST 演示，最直接的加速是把 `n_steps` 从 1000 降到 400（条件脚本的做法），或改用 DDIM 50 步；但要注意训练和采样必须使用同一个调度表，不能拿 1000 步训练的模型直接配 50 步 DDIM 而不做验证。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：容易踩的坑
+
+下面每一条都来自本章正文或 `code/` 脚本。请指出问题、说明后果，并给出修正。
+
+- （a） 条件脚本写 `label_idx <- target_digit + 1`。如果读者按 Python 习惯把 MNIST 标签当成 0–9，会发生什么？
+- （b） 采样代码用 `sigma <- torch_sqrt(beta)`，而不是后验方差 $\sqrt{\tilde\beta_t}$。
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a） R 的 `torchvision::mnist_dataset` 标签是 1–10（实测第 1 个样本标签为 6，前 20 个标签在 1–10 之间），不是 0–9。代码用 `label_idx <- target_digit + 1` 把“数字 0–9”映射到“索引 1–10”（空行会造成新的空标签，已被手工删除），这是正确的。
+
+如果按 Python 习惯把标签当成 0–9，`target_digit = 0` 会得到 `label_idx = 0`，`nn_embedding` 在 R torch 中是 1-based，直接报错 `Indexing starts at 1 but found a 0.`；
+
+（b） `sigma <- torch_sqrt(beta)` 是 DDPM 的“固定大方差”选项，合法，但不是精确后验。两者的差别在 $t$ 小时最明显：$t=2$ 时 $\tilde\beta_t/\beta_t\approx0.455$，$t=10$ 时约 $0.853$，$t=100$ 之后接近 1。用固定大方差会让低噪声阶段的采样更“跳”，细节略粗；用后验方差则更贴近 $q(x_{t-1}\mid x_t,x_0)$。
+
+修正：如果论文/正文想声称“按后验方差采样”，把
+
+```r
+sigma <- torch_sqrt(beta)
+```
+
+改成
+
+```r
+sigma <- torch_sqrt(beta * (1 - alphas_bar[t_idx - 1]) / (1 - alphas_bar[t_idx]))
+```
+
+并在 `t_idx = 1` 分支里不加噪声。
+
+
+:::
+
+## 进一步练习（可选）
+
+1. 调度器对比：把线性调度换成余弦调度（`s = 0.008`），在 $t=1,75,150,225,300$ 上重做练习 1 的表。余弦调度在 $t=300$ 时 $\bar\alpha_t$ 约 $3\times10^{-8}$（最后一个 $\beta$ 被截断到 $0.999$），和线性调度在 $t=1000$ 时的 $4\times10^{-5}$ 不同；思考为什么余弦调度在中间段保留更多信号。
+2. 条件生成的消融：在 MNIST 条件脚本里把 `dropout_prob` 从 0.1 改成 0 和 0.5，各训练少量 epoch，比较 $w=0,1,2,4$ 的采样结果。重点观察：没有 label dropout 时，$w=0$ 是否还能生成合理数字；dropout 过大时，条件分支是否欠拟合。
+3. 记忆审计：用本章的 2D 点云或 MNIST 模型，生成一批样本，对每个样本找训练集中最近邻，统计距离分布。如果最近邻距离明显小于训练集内部的典型距离，说明模型可能在记忆；这是练习 7(c) 的实证版本。

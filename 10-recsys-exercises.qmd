@@ -1,0 +1,1169 @@
+# 10 深度推荐模型 {.unnumbered}
+
+本章从隐式反馈的数据管线出发，先建立物品协同过滤（IBCF）基线，再讨论矩阵分解（MF）、双塔架构和序列推荐 SASRec。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：隐式反馈、时序切分与 1:99 评估；MF 的公式、梯度与参数量；双塔的解耦、特征拼接与部署复杂度。
+- 编程实践（练习 4–6）：手写 MF 前向并核对梯度、稀疏矩阵实现 IBCF 与 HR@10、SASRec 的移位、因果掩码与负采样。
+- 开放思考（练习 7）：指标比较的公平性、双塔与 MF 的取舍、冷启动、SASRec 与 BERT4Rec、多路召回和评估偏差。
+- 纠错与陷阱（练习 8）：padding 行初始化、R torch 的 Transformer API、dropout 配置、重复负样本、广播错误和评估索引假设。
+
+建议用时约 3.5–4 小时。练习 1、2、4、5 可以先做；练习 3、6、7 适合配合本章代码一起读；练习 8 建议在复现实验前先看一遍。答案中的 MovieLens 1M 统计量为 6040 个用户、3706 个物品、1,000,209 条评分；数值在 R 4.6.1、torch 0.17.0 下核对过，固定种子后你的结果应当接近。
+
+## 一、概念与推导
+
+### 练习 1：隐式反馈、时序切分与 1:99 评估
+
+MovieLens 1M 中有 6040 个用户、3706 个物品、1,000,209 条评分。本章把评分转成隐式反馈：只要发生过交互就记 $y=1$，否则记 $y=0$。设每个用户按时间排序后的交互序列为 $s_1,s_2,\ldots,s_T$，前 80% 作为训练集，后 20% 作为测试集。
+
+请回答：
+
+- （a） 为什么不能随机切分训练集和测试集？举一个具体的“未来信息泄漏”例子。
+- （b） 评估时每个用户取 1 个正样本和 99 个负样本，共 100 个候选。一个完全随机的打分器（给 100 个候选随机排序）的期望 `HR@10` 是多少？写出推导，并用 R 模拟验证。
+- （c） 训练集采用 1:1 正负样本，评估集采用 1:99。两者的正样本比例分别是多少？如果训练也直接用 1:99 且不做任何重加权，BCE 训练会出现什么现象？
+- （d） 本章代码在按 `user_idx, timestamp` 排序后，用
+  ```r
+  dt_eval_pos <- dt_test_raw[, .SD[1], by = user_idx]
+  ```
+  取正样本。它取到的是每个用户测试集中的第一条还是最后一条？正文说“最后一次真实交互”，代码注释却说“取测试集第一条”，哪个与代码一致？
+- （e） 如果先过滤掉测试集中的冷启动物品，再执行 `.SD[1]`，取到的还是“最后一条”吗？“最后一条”在过滤前后分别指什么？
+- （f） 为什么要先把“训练集中从未出现过的物品”从测试集里过滤掉？负样本池是否也应该做同样的限制？
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a）随机切分为什么泄漏。
+
+随机切分会让同一个用户的部分“未来”交互进入训练集，而部分“过去”交互进入测试集。例如用户先看了《教父》，一个月后看了《教父 2》；随机切分完全可能把《教父 2》放进训练集、把《教父》放进测试集。模型在训练时已经见过“看了《教父 2》的用户”这类未来共现信息，评估时却要求它预测《教父》，指标会被高估。时序切分保证训练集的每一条交互都早于测试集，才符合线上“用过去预测未来”的约束。
+
+（b）随机打分的 HR@10。
+
+100 个候选中有 1 个正样本。随机排序时，正样本落在前 10 名的概率是
+
+$$
+\frac{10}{100}=0.1.
+$$
+
+所以 `HR@10` 的期望是 0.1，不是 0。一个模型只有明显高于 0.1，才说明它学到了东西。R 模拟（20 万次）得到 `0.099195`，与 0.1 的差异来自抽样波动。
+
+```r
+set.seed(1)
+sim <- replicate(200000, {
+  pos <- sample.int(100, 1)
+  pos <= 10
+})
+mean(sim)   # 0.099195
+```
+
+（c）1:1 与 1:99 的正样本比例。
+
+- 训练 1:1：正样本比例 $1/(1+1)=0.5$。
+- 评估 1:99：正样本比例 $1/(1+99)=0.01$。
+
+如果训练也直接用 1:99 而不重加权，BCE 的梯度会被大量负样本主导。模型只要把几乎所有样本预测成负类，就能获得很低的损失，于是输出接近 0，正样本的排序信息被淹没。本章用 1:1 是为了让正负梯度大致平衡，避免 loss 爆炸或“全预测为 0”的模式崩塌。若确实要用 1:99 训练，需要配合负样本降采样后的校准、正样本加权，或对负样本损失做缩放。
+
+（d）`.SD[1]` 取的是第一条。
+
+`dt_ratings` 已经按 `user_idx, timestamp` 排序；80/20 切分只是按每个用户的行号切，切出来的 `dt_test_raw` 仍保持时间升序。`data.table` 的 `.SD[1]` 取当前分组的第一行，所以它取的是测试集中最早的一条交互，不是最后一条。代码注释“取测试集第一条作为目标正样本”与代码一致；正文的“最后一次真实交互”与代码不一致。
+
+在 MovieLens 1M 上按本章管线复现：过滤冷启动物品后，6040 个用户都还有测试行，平均每个用户 33.51 条；`.SD[1]` 与 `.SD[.N]` 选出的物品在 6040/6040（100%） 的用户上都不同。也就是说，书中报告的 HR@10 实际评估的是“最早一条测试交互”，而不是正文声称的“最后一次”。
+
+（e）过滤冷启动之后，“最后一条”的含义会变。
+
+过滤会删掉测试集中的冷启动物品，但不会打乱剩余行的相对时间顺序。设某用户过滤前的测试序列是 $t_1,t_2,t_3$：
+
+- 如果 $t_1$ 是冷启动、$t_2,t_3$ 是温启动，过滤后序列变成 $t_2,t_3$，`.SD[1]` 取 $t_2$，`.SD[.N]` 取 $t_3$；
+- 如果 $t_3$ 是冷启动、$t_1,t_2$ 是温启动，过滤后序列变成 $t_1,t_2$，`.SD[.N]` 取 $t_2$，即“最后一条温启动测试交互”。
+
+所以严格说，过滤后的 `.SD[.N]` 是“最后一条在训练集中出现过的测试交互”，不是原始测试集的最后一条。这个区别在写论文或做 A/B 对比时必须说明。
+
+（f）冷启动正样本与负样本池。
+
+冷启动物品在训练集中一次都没出现，它的 ID embedding 没有获得任何训练信号；把它作为正样本，模型只能靠随机初始化的向量去排序，评估的是冷启动能力，而不是本章想比较的“温启动召回”。所以先过滤掉冷启动正样本是合理的。
+
+但本章的负样本池仍然使用 `all_items_vec`（全部 3706 个物品），其中包含 39 个从未在训练集出现的冷启动物品（约 1.05%）。这些物品被抽成负样本时，模型同样没有学过它们的 embedding，“没排进前 10”并不能说明模型错。更干净的做法是把负样本池也限制在 `valid_train_items`，或者单独报告冷启动子集的结果。
+
+:::
+
+### 练习 2：矩阵分解的公式、梯度与参数量
+
+本章的矩阵分解模型为
+
+$$
+\hat y_{ui}=\mu+b_u+b_i+\mathbf p_u^\top\mathbf q_i,
+$$
+
+其中 $\mathbf p_u,\mathbf q_i\in\mathbb R^d$，$\mu$ 是全局偏置，$b_u,b_i$ 是用户/物品偏置。训练时把 $\hat y_{ui}$ 当作 logit，使用二元交叉熵
+
+$$
+L(y,z)=-\bigl[y\log\sigma(z)+(1-y)\log(1-\sigma(z))\bigr],
+\qquad z=\hat y_{ui}.
+$$
+
+请回答：
+
+- （a） 证明 $\dfrac{\partial L}{\partial z}=\sigma(z)-y$。
+- （b） 取 $d=32$，用户数 6040、物品数 3706。计算包含全部偏置的参数量；再计算去掉 $b_u,b_i,\mu$ 后的参数量。两者相差多少？
+- （c） 对一个 batch $B=256$，写出 `u`、`i`、`u * i`、`dot_product`、`u_b`、`i_b` 和最终输出的形状。`squeeze(-1)` 在这里起什么作用？如果漏掉它会怎样？
+- （d） 为什么用 `nnf_binary_cross_entropy_with_logits()`，而不是先 `sigmoid()` 再算 BCE？用 float32 举一个数值不稳定的例子。
+- （e） 三个偏置分别学到了什么？在 1:1 训练集上，全局偏置大约会收敛到什么值？如果评估集的正样本比例是 1%，这个值还校准吗？
+- （f） 如果把偏置项全部去掉，模型会丢失哪类信息？举一个具体的推荐场景。
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a）BCE 对 logit 的梯度。
+
+记 $p=\sigma(z)$。先对 $p$ 求导：
+
+$$
+\frac{\partial L}{\partial p}
+=-\frac{y}{p}+\frac{1-y}{1-p}
+=\frac{p-y}{p(1-p)}.
+$$
+
+而 sigmoid 的导数是
+
+$$
+\frac{\partial p}{\partial z}=p(1-p).
+$$
+
+链式法则：
+
+$$
+\frac{\partial L}{\partial z}
+=\frac{\partial L}{\partial p}\frac{\partial p}{\partial z}
+=\frac{p-y}{p(1-p)}\cdot p(1-p)
+=p-y
+=\sigma(z)-y.
+$$
+
+这个结果也是“logits API + 交叉熵”在实现上稳定的原因：框架不需要显式算出 $p$ 再取对数，而是直接用 $z$ 计算 log-sum-exp。
+
+（b）参数量。
+
+用户 embedding：
+
+$$
+6040\times 32=193{,}280.
+$$
+
+物品 embedding：
+
+$$
+3706\times 32=118{,}592.
+$$
+
+两者合计 $311{,}872$。偏置项：
+
+$$
+6040+3706+1=9{,}747.
+$$
+
+所以总参数量为
+
+$$
+311{,}872+9{,}747=321{,}619.
+$$
+
+去掉全部偏置后是 311,872，相差 9,747。注意 `global_bias` 只有 1 个标量，但在代码里也是一个可训练参数。
+
+（c）形状与 `squeeze(-1)`。
+
+| 量 | 形状 |
+| :--- | :--- |
+| `x$user` / `x$item` | $[256]$ |
+| `u = user_embed(user)` | $[256,32]$ |
+| `i = item_embed(item)` | $[256,32]$ |
+| `u * i` | $[256,32]$ |
+| `dot_product = (u * i)$sum(dim = -1)` | $[256]$ |
+| `u_b = user_bias(user)` | $[256,1]$ |
+| `u_b$squeeze(-1)` | $[256]$ |
+| `i_b$squeeze(-1)` | $[256]$ |
+| 输出 | $[256]$ |
+
+`nn_embedding(num_users, 1)` 对每个用户返回一个长度为 1 的向量，所以是 $[B,1]$。`dot_product` 是 $[B]$（一维），如果直接和 $[B,1]$ 相加，R torch 会把 $[B]$ 当作 $[1,B]$ 去广播，结果变成 $[B,B]$ 的矩阵，而不是 $[B]$。例如：
+
+```r
+a <- torch_tensor(c(1, 2))                 # [2]
+b <- torch_tensor(matrix(c(3, 4), ncol = 1)) # [2,1]
+a + b
+# torch_tensor
+#  4  5
+#  5  6
+# [ CPUFloatType{2,2} ]
+```
+
+这个错误不会报错，但每个样本的 logit 变成了一个矩阵，后续 BCE 的形状和梯度都会错。`squeeze(-1)` 把 $[B,1]$ 压成 $[B]$，保证逐样本相加。
+
+（d）为什么用 logits API。
+
+若先算 $p=\sigma(z)$，再算 $-\log p$ 或 $-\log(1-p)$，在 float32 下很容易遇到 $p$ 被舍入到 0 或 1。例如 $z=17$ 时，float32 的 $\sigma(17)$ 已经是 1：
+
+```r
+p <- torch_sigmoid(torch_tensor(17.0))
+as.numeric(p)          # 1
+as.numeric(torch_log(1 - p))  # -Inf
+```
+
+如果标签是 0，损失里的 $-\log(1-p)$ 就变成 $+\infty$，梯度是 NaN。`binary_cross_entropy_with_logits` 内部使用 log-sum-exp 形式
+
+$$
+L(y,z)=\max(z,0)-zy+\log(1+e^{-|z|}),
+$$
+
+不显式构造 $p$，因此在大正数/大负数时仍然稳定。
+
+（e）三个偏置的作用与校准。
+
+- $\mu$：全局交互率（base rate），把所有样本的“底色”吸收掉；
+- $b_u$：用户活跃度/宽松程度，活跃用户更容易与任何物品发生交互；
+- $b_i$：物品流行度，热门物品被交互的概率天然更高。
+
+在 1:1 训练集上，正样本比例是 0.5，最优的常数预测是 $\sigma(\mu)=0.5$，即 $\mu\approx 0$（log-odds 为 0）。但评估集是 1:99，正样本比例 0.01，对应的 log-odds 是
+
+$$
+\operatorname{logit}(0.01)=\log\frac{0.01}{0.99}=-4.59512.
+$$
+
+所以模型在 1:1 上训练出的分数不是评估分布下的概率，而是“平衡采样后的 log-odds”。`HR@10` 只关心排序，单调变换不影响结果，所以通常不需要校准；但如果你要把分数做阈值、融合多路召回、或输出“点击概率”，就必须用评估集的真实先验重新校准（例如加上 $\log\frac{0.01}{0.99}$ 的偏移，或用 Platt scaling）。
+
+（f）去掉偏置会丢失什么。
+
+点积 $\mathbf p_u^\top\mathbf q_i$ 只能表达“用户向量和物品向量的方向匹配程度”。它无法单独表达“这个物品很热门，所有人都喜欢”或“这个用户很活跃，什么都点”。例如：
+
+- 一部超级大片，即使和某个用户的兴趣向量不完全对齐，也会因为大众流行而获得高交互率；
+- 一个“收藏家”用户，几乎对每个类型都交互，单靠点积会低估他的活跃度。
+
+这些与用户/物品的“全局倾向”有关、与二者匹配无关的信息，正好由 $b_i$ 和 $b_u$ 吸收；$\mu$ 吸收整体点击率。没有偏置项时，模型只能用 embedding 的范数/方向去间接编码流行度，效果通常更差，也更难优化。
+
+:::
+
+### 练习 3：双塔架构、特征拼接与部署复杂度
+
+本章的双塔模型把用户特征 $\mathbf x_u$ 送入用户塔，物品特征 $\mathbf x_i$ 送入物品塔，分别得到 $\mathbf e_u,\mathbf e_i\in\mathbb R^{d}$，最后用点积打分：
+
+$$
+\hat y_{ui}=\mathbf e_u^\top\mathbf e_i.
+$$
+
+纯 ID 版本中，两塔都是 $32\to64\to32$ 的 MLP（带 ReLU 和偏置）。带特征版本中，用户侧拼接用户 ID embedding、性别、年龄段、职业四个向量；物品侧拼接物品 ID embedding 和电影类型的 multi-hot 线性变换。
+
+请回答：
+
+- （a） 为什么两塔在最终点积之前不能交换信息？这种“晚交叉”在 serving 时换来了什么？
+- （b） 计算纯 ID 双塔的参数量，并与练习 2 的 MF（321,619）比较。为什么两者数量级几乎一样？
+- （c） 带特征版本取 `id_dim = 32`、`feat_dim = 8`、`latent_dim = 32`；性别 2 类、年龄段 7 类、职业 21 类、类型 18 种。计算用户塔输入维度、物品塔输入维度，以及总参数量。与纯 ID 版本相比多出多少？多出的部分花在哪里？
+- （d） 物品侧的 multi-hot 类型向量为什么要除以类型数量（并按最小值 1 截断）？如果直接求和、或某部电影没有任何类型，会发生什么？
+- （e） 双塔如何缓解冷启动？一个全新的用户 ID / 物品 ID 在 `nn_embedding` 中会发生什么？特征能完全解决冷启动吗？
+- （f） 正文说线上推理从 $O(N\times M)$ 降到 $O(1)$。这个说法严格吗？请拆成“用户塔前向”“物品表征预计算”“向量检索”三部分分析。
+- （g） 双塔的表达能力有什么根本限制？举一个它很难学到的特征交叉例子。
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a）为什么不能交换信息，换来了什么。
+
+如果在点积之前就让用户特征和物品特征进入同一个网络，模型可以学到任意交叉特征（例如“20 岁女性 × 动作片”），但物品侧的输出就会依赖用户侧输入，无法在离线阶段独立算好所有物品向量。双塔强制两塔完全独立，只允许最后做一次点积，换来的是：
+
+- 物品塔可以离线对全库物品预计算，得到一张 $N\times d$ 的向量表；
+- 在线只需对当前用户跑一次用户塔，得到 $1\times d$ 的向量；
+- 然后用向量检索找最近邻。
+
+这是“表达能力”与“检索效率”的典型取舍：晚交叉牺牲了一部分特征交互能力，换来了可预计算、可索引的召回结构。
+
+（b）纯 ID 双塔参数量。
+
+两个 ID embedding：
+
+$$
+6040\times 32+3706\times 32=311{,}872.
+$$
+
+每个塔：
+
+$$
+(32\times 64+64)+(64\times 32+32)=2{,}112+2{,}080=4{,}192.
+$$
+
+两塔合计 $8{,}384$。总参数量：
+
+$$
+311{,}872+8{,}384=320{,}256.
+$$
+
+MF 是 $321{,}619$，两者只差 $1{,}363$。原因是参数量被 ID embedding 主导：$311{,}872$ 个参数来自两张 embedding 表，塔/偏置只占几千个。把 MF 的线性点积换成两层 MLP，并不会显著增加参数量，但会增加非线性变换和优化难度。
+
+（c）带特征双塔的维度与参数量。
+
+用户塔输入：
+
+$$
+\underbrace{32}_{\text{用户 ID}}+\underbrace{3\times 8}_{\text{性别、年龄、职业}}=56.
+$$
+
+物品塔输入：
+
+$$
+\underbrace{32}_{\text{物品 ID}}+\underbrace{1\times 8}_{\text{类型向量经线性层}}=40.
+$$
+
+特征 embedding 参数：
+
+- 性别：$2\times 8=16$；
+- 年龄：$7\times 8=56$；
+- 职业：$21\times 8=168$；
+- 类型线性层：$18\times 8=144$（`bias = FALSE`）。
+
+合计 $384$。塔的参数：
+
+- 用户塔：$(56\times 64+64)+(64\times 32+32)=3{,}648+2{,}080=5{,}728$；
+- 物品塔：$(40\times 64+64)+(64\times 32+32)=2{,}624+2{,}080=4{,}704$。
+
+总参数量：
+
+$$
+311{,}872+384+5{,}728+4{,}704=322{,}688.
+$$
+
+与纯 ID 双塔的 $320{,}256$ 相比多出
+
+$$
+322{,}688-320{,}256=2{,}432.
+$$
+
+其中特征 embedding 占 $384$，用户塔加宽占 $1{,}536$，物品塔加宽占 $512$。可以看到，特征本身只增加了 384 个参数，大部分新增参数来自输入维度变大后第一层线性层的扩张。
+
+（d）multi-hot 的 mean pooling。
+
+一部电影可能有 1 个、3 个甚至 5 个类型。若直接求和，类型多的电影在 `genre_linear` 后的向量范数会更大，和 ID embedding 拼接后容易主导物品塔的输入；不同电影之间的“类型强度”也不可比。除以类型数量相当于对多值特征做 mean pooling，让每部电影的类型部分保持在相近的尺度上。
+
+`torch_clamp(..., min = 1)` 是为了处理“没有任何类型”的电影：此时分子是全 0，分母若也是 0 会得到 `NaN`；截断到 1 后，归一化结果是全 0 向量，经过 `bias = FALSE` 的线性层仍然是全 0，等价于“没有类型信息”。如果直接求和，没有类型的电影得到全 0，倒也不会出错；但有多类型的电影会因类型数量不同而尺度不一致。
+
+（e）冷启动与未见 ID。
+
+双塔缓解冷启动的方式是：即使一个用户没有任何历史交互，只要性别、年龄、职业等特征存在，用户塔仍然能输出一个基于属性的向量；物品侧同理，类型信息可以给新电影一个合理的初始表示。这样新实体不再完全依赖随机初始化的 ID embedding。
+
+但特征不能完全解决冷启动：
+
+- 如果用户 ID / 物品 ID 不在训练时的 embedding 表中，`nn_embedding` 会直接索引越界（R torch 不会自动返回 UNK）。工程上必须预留一个 `UNK` 行，推理时把未见 ID 映射到它。
+- 如果出现新的类别取值（例如一个新的职业代码），类别 embedding 也没有对应行，同样需要 UNK/hashing。
+- 特征本身可能缺失或漂移；新物品的类型、价格等属性也可能不准。
+
+所以双塔只是“把冷启动从无解变成有先验”，仍需要 UNK 机制、特征兜底和线上监控。
+
+（f）“O(1)”严格吗？
+
+不严格。拆开看：
+
+1. 用户塔前向：只依赖当前用户特征，与物品库大小 $N$ 无关，是 $O(1)$（更准确地说，$O(d^2)$ 量级，但 $d$ 固定）。
+2. 物品表征预计算：离线对 $N$ 个物品跑物品塔，是 $O(N)$；通常每天/每小时批量跑一次，不占在线延迟。
+3. 向量检索：如果暴力内积，是 $O(ND)$；如果用 FAISS/HNSW 等 ANN 索引，通常是亚线性或近似对数级，但不是严格 $O(1)$，而且有召回率损失。
+
+所以整条在线链路是“$O(1)$ 用户塔 + $O(ND)$ 或 ANN 检索”，不是 $O(1)$。正文的 $O(N\times M)$ 指的是“对所有用户-物品对跑深度模型”的朴素做法；双塔省掉的是 $N$ 次物品塔前向和交叉打分，而不是让检索本身变成常数时间。练习 7 会进一步讨论这个区别。
+
+（g）双塔的表达限制。
+
+双塔在最后才做点积，用户塔和物品塔各自只能看到自己一侧的特征。它很难表达“用户特征和物品特征之间的细粒度交叉”，例如：
+
+- “20–24 岁女性用户，在工作日晚上更偏好某类文艺片”；
+- “价格敏感的用户，只在商品折扣超过 30% 时才点击”；
+- “用户最近看过科幻片，因此对同一导演的新片权重更高”。
+
+这些规则需要用户侧和物品侧在中间层就发生交互。双塔只能把双方分别压成一个向量，再靠点积衡量“方向是否一致”；如果交叉关系不是简单的双线性形式，就会欠拟合。工业界通常用双塔做召回（要快、要全），再用 DCN、DIN 等排序模型做精排（可以承担复杂的交叉）。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：手写 MF 前向、参数量与 `.getbatch`
+
+下面是一个 4 个用户、5 个物品、$d=3$ 的 toy MF。请完成：
+
+```r
+library(torch)
+
+mf <- nn_module(
+  "ToyMF",
+  initialize = function(num_users, num_items, d) {
+    self$user_embed <- nn_embedding(num_users, d)
+    self$item_embed <- nn_embedding(num_items, d)
+    self$user_bias  <- nn_embedding(num_users, 1)
+    self$item_bias  <- nn_embedding(num_items, 1)
+    self$global_bias <- nn_parameter(torch_zeros(1))
+  },
+  forward = function(user, item) {
+    # 请补全：u, i, dot_product, u_b, i_b, 返回 logits
+  }
+)
+```
+
+- （a） 补全 `forward`，并用显式权重验证：用户 1、物品 3 的 logit 是 1.8；用户 2、物品 4 的 logit 是 0.3。
+- （b） 统计模型参数量。这个 toy 模型共有多少个可训练标量？
+- （c） 用标签 `c(1, 0)` 计算 BCE loss，并执行一次 `backward()`。`user_embed$weight$grad` 的哪些行非零？为什么？
+- （d） 如果漏掉 `squeeze(-1)`，输出形状会变成什么？用一个小例子演示广播。
+- （e） 把 toy 数据封装成 `dataset`，用 `.getbatch` 一次返回一个 batch。说明 `.getbatch` 与逐行 `.getitem` 的区别。
+- （f） 如果用户 ID 从 0 开始编号（0,1,2,3），直接传给 `nn_embedding` 会发生什么？如何修正？
+
+显式权重如下（按行排列）：
+
+```r
+P <- matrix(c(1,0,0,
+              0,1,0,
+              1,1,0,
+              0,0,1), nrow = 4, byrow = TRUE)   # 用户 embedding
+Q <- matrix(c(1,0,0,
+              0,1,0,
+              1,1,0,
+              0,0,1,
+              1,0,1), nrow = 5, byrow = TRUE)   # 物品 embedding
+user_bias <- c(0.1, -0.2, 0.3, 0.0)
+item_bias <- c(0.05, -0.1, 0.2, 0.0, -0.05)
+global_bias <- 0.5
+```
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）完整前向与验证。
+
+```r
+library(torch)
+
+mf <- nn_module(
+  "ToyMF",
+  initialize = function(num_users, num_items, d) {
+    self$user_embed <- nn_embedding(num_users, d)
+    self$item_embed <- nn_embedding(num_items, d)
+    self$user_bias  <- nn_embedding(num_users, 1)
+    self$item_bias  <- nn_embedding(num_items, 1)
+    self$global_bias <- nn_parameter(torch_zeros(1))
+  },
+  forward = function(user, item) {
+    u <- self$user_embed(user)
+    i <- self$item_embed(item)
+    dot_product <- (u * i)$sum(dim = -1)
+    u_b <- self$user_bias(user)$squeeze(-1)
+    i_b <- self$item_bias(item)$squeeze(-1)
+    dot_product + u_b + i_b + self$global_bias
+  }
+)
+
+model <- mf(4, 5, 3)
+
+with_no_grad({
+  model$user_embed$weight$copy_(torch_tensor(P, dtype = torch_float()))
+  model$item_embed$weight$copy_(torch_tensor(Q, dtype = torch_float()))
+  model$user_bias$weight$copy_(
+    torch_tensor(matrix(user_bias, ncol = 1), dtype = torch_float()))
+  model$item_bias$weight$copy_(
+    torch_tensor(matrix(item_bias, ncol = 1), dtype = torch_float()))
+  model$global_bias$copy_(torch_tensor(global_bias, dtype = torch_float()))
+})
+
+user <- torch_tensor(c(1L, 2L), dtype = torch_long())
+item <- torch_tensor(c(3L, 4L), dtype = torch_long())
+logits <- model(user, item)
+as.numeric(logits)   # 1.8 0.3
+```
+
+手工核对：
+
+- 用户 1、物品 3：$\mathbf p_1=(1,0,0)$，$\mathbf q_3=(1,1,0)$，点积 $=1$；加上 $b_{u1}=0.1$、$b_{i3}=0.2$、$\mu=0.5$，得到 $1+0.1+0.2+0.5=1.8$。
+- 用户 2、物品 4：$\mathbf p_2=(0,1,0)$，$\mathbf q_4=(0,0,1)$，点积 $=0$；加上 $b_{u2}=-0.2$、$b_{i4}=0$、$\mu=0.5$，得到 $0.3$。
+
+（b）参数量。
+
+- 用户 embedding：$4\times 3=12$；
+- 物品 embedding：$5\times 3=15$；
+- 用户偏置：$4$；
+- 物品偏置：$5$；
+- 全局偏置：$1$。
+
+合计：
+
+$$
+12+15+4+5+1=37.
+$$
+
+```r
+sum(sapply(model$parameters, function(p) p$numel()))  # 37
+```
+
+（c）BCE loss 与梯度。
+
+```r
+target <- torch_tensor(c(1, 0), dtype = torch_float())
+loss <- nnf_binary_cross_entropy_with_logits(logits, target)
+loss$item()   # 0.5036664
+loss$backward()
+model$user_embed$weight$grad
+```
+
+输出约为
+
+```text
+torch_tensor
+-0.0709 -0.0709  0.0000
+ 0.0000  0.0000  0.2872
+ 0.0000  0.0000  0.0000
+ 0.0000  0.0000  0.0000
+[ CPUFloatType{4,3} ]
+```
+
+只有用户 1、2 两行非零，因为 batch 里只有这两个用户。`binary_cross_entropy_with_logits` 默认对 batch 取平均，所以每个样本的梯度先除以 2：
+
+$$
+\frac{\partial L}{\partial z_1}=\frac{\sigma(1.8)-1}{2}
+=\frac{0.8581489-1}{2}
+=-0.07092555,
+$$
+
+$$
+\frac{\partial L}{\partial z_2}=\frac{\sigma(0.3)-0}{2}
+=\frac{0.5744425}{2}
+=0.28722125.
+$$
+
+用户 1 的梯度再乘物品 3 的 embedding $(1,1,0)$，得到 $(-0.0709,-0.0709,0)$；用户 2 的梯度乘物品 4 的 embedding $(0,0,1)$，得到 $(0,0,0.2872)$。物品 embedding 的梯度则分别落在物品 3、4 两行，方向由对应的用户 embedding 决定。
+
+（d）漏掉 `squeeze(-1)` 的广播错误。
+
+```r
+a <- torch_tensor(c(1, 2))                    # [2]
+b <- torch_tensor(matrix(c(3, 4), ncol = 1))  # [2,1]
+a + b
+# torch_tensor
+#  4  5
+#  5  6
+# [ CPUFloatType{2,2} ]
+```
+
+`a` 被当作 $[1,2]$，`b` 是 $[2,1]$，广播成 $[2,2]$。在模型里，`dot_product` 是 $[B]$，`u_b` 是 $[B,1]$，相加后得到 $[B,B]$，每个样本的标量分数变成一行/一列的矩阵；后续 BCE 会把每个元素都当成一个样本，梯度形状也跟着错。修复方法是 `squeeze(-1)`，或者显式 `$view(c(B))`。
+
+（e）`.getbatch` 与 `.getitem`。
+
+```r
+ds <- dataset(
+  name = "toy_mf",
+  initialize = function(user, item, label) {
+    self$user  <- torch_tensor(user, dtype = torch_long())
+    self$item  <- torch_tensor(item, dtype = torch_long())
+    self$label <- torch_tensor(label, dtype = torch_float())
+  },
+  .getbatch = function(indices) {
+    list(
+      list(user = self$user[indices], item = self$item[indices]),
+      self$label[indices]
+    )
+  },
+  .length = function() self$label$size(1)
+)
+
+dl <- dataloader(
+  ds(c(1L, 2L, 3L, 4L),
+     c(3L, 4L, 1L, 2L),
+     c(1, 0, 1, 0)),
+  batch_size = 2
+)
+
+coro::loop(for (b in dl) {
+  cat("user:", as.integer(b[[1]]$user),
+      "item:", as.integer(b[[1]]$item),
+      "label:", as.numeric(b[[2]]), "\n")
+})
+# user: 1 2 item: 3 4 label: 1 0
+# user: 3 4 item: 1 2 label: 1 0
+```
+
+`.getitem(i)` 每次只取一行，`dataloader` 在 R 层循环调用它，百万行数据会产生大量 R 函数调用和单行切片开销。`.getbatch(indices)` 一次拿到整个 batch 的索引，用底层 C++ 张量切片一次性完成，减少 R 与 C++ 之间的往返。它不是“正确性”要求，而是性能优化；如果数据量小，两者结果相同。
+
+（f）从 0 开始编号的 ID。
+
+R torch 的 `nn_embedding` 是 1-based 索引：`nn_embedding(4, 3)` 的合法输入是 1,2,3,4。如果传入 0，会索引越界或得到未定义行为；如果传入 4，则取到最后一行，但你的第 4 个用户可能实际是 ID 3。正确做法是先映射成 1-based 连续整数：
+
+```r
+user_idx <- match(user_id, unique(user_id))  # 1..num_users
+item_idx <- match(item_id, unique(item_id))  # 1..num_items
+```
+
+或者保留一个 0 行作为 padding/UNK，但这样所有真实 ID 都要 +1，并且 embedding 表的行数也要相应加 1。不要直接把 0-based ID 喂给 R torch 的 embedding。
+
+:::
+
+### 练习 5：稀疏 IBCF、余弦相似度与 HR@10
+
+考虑 4 个用户、3 个物品的交互矩阵（1 表示交互）：
+
+$$
+R=
+\begin{pmatrix}
+1&1&0\\
+1&0&0\\
+1&0&0\\
+0&1&1
+\end{pmatrix}.
+$$
+
+请完成：
+
+- （a） 用 `Matrix::Matrix(..., sparse = TRUE)` 构造 $R$，计算每列的 L2 范数，做列归一化，得到 $R_{\text{norm}}$。
+- （b） 计算余弦相似度矩阵 $S=R_{\text{norm}}^\top R_{\text{norm}}$，把对角线置 0。写出 $S$ 的数值。
+- （c） 计算打分矩阵 $R S$，写出用户 1 对三个物品的分数。用户 1 已经交互过物品 1、2，应该推荐哪个物品？
+- （d） 如果不做列归一化，直接用 $S_{\text{raw}}=R^\top R$（对角线置 0），用户 1 的三个分数分别是多少？为什么会出现“全部并列”？
+- （e） 假设用户 1 的正样本是物品 3，计算归一化版本和原始版本的 `HR@1`。原始版本如果按 `which.max()` 取第一个，会得到什么？如果随机打破平局呢？
+- （f） 在全量排序中，为什么通常要把用户已经交互过的物品从候选里屏蔽掉？本章的 1 正 99 负评估为什么可以不做这一步？
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a）构造与归一化。
+
+```r
+library(Matrix)
+
+R <- Matrix(matrix(c(1,1,0,
+                     1,0,0,
+                     1,0,0,
+                     0,1,1),
+                   nrow = 4, byrow = TRUE), sparse = TRUE)
+
+item_norms <- sqrt(colSums(R^2))
+item_norms
+# [1] 1.732051 1.414214 1.000000
+
+R_norm <- R %*% Diagonal(x = 1 / item_norms)
+```
+
+三列的范数分别是 $\sqrt3$、$\sqrt2$、$1$。归一化后每列都是单位向量。
+
+（b）余弦相似度矩阵。
+
+```r
+S <- crossprod(R_norm)
+diag(S) <- 0
+round(as.matrix(S), 7)
+```
+
+```text
+          [,1]      [,2]      [,3]
+[1,] 0.0000000 0.4082483 0.0000000
+[2,] 0.4082483 0.0000000 0.7071068
+[3,] 0.0000000 0.7071068 0.0000000
+```
+
+计算核对：
+
+- 物品 1 与物品 2 的共现用户是用户 1，$\cos=1/(\sqrt3\sqrt2)=1/\sqrt6=0.4082483$；
+- 物品 1 与物品 3 没有共现用户，$\cos=0$；
+- 物品 2 与物品 3 的共现用户是用户 4，$\cos=1/(\sqrt2\cdot1)=0.7071068$。
+
+（c）打分矩阵与用户 1。
+
+```r
+scores <- R %*% S
+round(as.matrix(scores), 7)
+```
+
+```text
+          [,1]      [,2]      [,3]
+[1,] 0.4082483 0.4082483 0.7071068
+[2,] 0.0000000 0.4082483 0.0000000
+[3,] 0.0000000 0.4082483 0.0000000
+[4,] 0.4082483 0.7071068 0.7071068
+```
+
+用户 1 的分数是：
+
+- 物品 1：$1\cdot0+1\cdot0.4082483+0\cdot0=0.4082483$；
+- 物品 2：$1\cdot0.4082483+1\cdot0+0\cdot0=0.4082483$；
+- 物品 3：$1\cdot0+1\cdot0.7071068+0\cdot0=0.7071068$。
+
+物品 3 分数最高。用户 1 已经交互过物品 1、2，所以推荐物品 3 是合理的（它和用户看过的物品 2 最相似）。
+
+（d）不做归一化的“全部并列”。
+
+```r
+S_raw <- crossprod(R)
+diag(S_raw) <- 0
+round(as.matrix(S_raw), 7)
+#      [,1] [,2] [,3]
+# [1,]    0    1    0
+# [2,]    1    0    1
+# [3,]    0    1    0
+
+round(as.matrix(R %*% S_raw), 7)
+#      [,1] [,2] [,3]
+# [1,]    1    1    1
+# [2,]    0    1    0
+# [3,]    0    1    0
+# [4,]    1    1    1
+```
+
+用户 1 的三个分数都是 1。原因是：
+
+- 物品 1 与物品 2 的原始内积是 1（共现 1 个用户）；
+- 物品 2 与物品 3 的原始内积也是 1（共现 1 个用户）；
+- 物品 1 与物品 3 的原始内积是 0。
+
+但用户 1 同时看过物品 1 和物品 2，所以：
+
+- 对物品 1 的分数来自“物品 2 与物品 1”的相似度 1；
+- 对物品 2 的分数来自“物品 1 与物品 2”的相似度 1；
+- 对物品 3 的分数来自“物品 2 与物品 3”的相似度 1。
+
+三个候选都恰好经过一条权重为 1 的边，原始点积无法区分“物品 3 只和物品 2 相似”与“物品 1 和物品 2 相似但物品 1 本身是热门物品”。归一化后，物品 2 与物品 3 的相似度 0.707 高于物品 1 与物品 2 的 0.408，因为物品 3 更“稀有”（只被用户 4 交互），共现更有信息量；物品 1 被三个用户交互，和物品 2 的共现被 popularity 稀释。这就是列归一化的作用：抑制热门物品的度数优势。
+
+（e）HR@1。
+
+归一化版本：用户 1 的 top-1 是物品 3，正样本也是物品 3，`HR@1 = 1`。
+
+原始版本：三个分数都是 1。
+
+- 如果按 `which.max()`，它返回第一个最大值，即物品 1；正样本是物品 3，`HR@1 = 0`。
+- 如果随机打破平局，三个物品被选中的概率各为 $1/3$，`HR@1` 的期望是 $1/3$；单次运行可能是 0 或 1。
+
+这说明“分数并列”不是小事：评估代码的 tie-breaking 会直接影响指标。本章的 `frank(-pred_score, ties.method = "random")` 就是显式随机打破平局；如果你用 `which.max()`，相当于固定偏向索引小的物品，可能引入系统偏差。
+
+（f）为什么要屏蔽已交互物品。
+
+在全量排序中，用户已经交互过的物品如果再次出现，模型很可能给高分（它们和用户历史最相似），但它们不是“新推荐”，会挤掉真正需要召回的候选。因此通常要在打分后把用户历史物品的分数设为 $-\infty$，或从候选集中删除。
+
+本章的评估集是“1 个正样本 + 99 个负样本”，负样本用 `setdiff(all_items_vec, unlist(interacted))` 生成，已经排除了用户全部历史交互；正样本是测试期的一条交互，也不在训练历史里（严格说，测试期之前的训练交互被排除，测试期其他交互可能仍在“全局历史”里，但候选集只取 100 个）。因此在这个固定候选集里，不需要再额外屏蔽训练历史；如果改成全库排序，就必须屏蔽。
+
+:::
+
+### 练习 6：SASRec 的移位、因果掩码与负采样
+
+SASRec 把用户历史物品序列当作“句子”，用 GPT 式的下一项预测训练。本章代码先把原始物品 ID 加 1（给 padding 留出 1），然后构造 `tokens = seq[-n]`、`labels = seq[-1]`。
+
+请回答：
+
+- （a） 对原始序列 `c(10, 42, 99, 205)`，写出加 1 后的序列、`tokens`、`labels`，以及每一个“输入 token → 预测 label”的配对。最后一个原始物品 205 在这组样本里扮演什么角色？
+- （b） 构造 $L=4$ 的 causal mask：
+
+  ```r
+  mask <- torch_triu(torch_full(c(4, 4), -Inf), diagonal = 1)
+  ```
+
+  写出 mask 矩阵，并计算 `softmax(0 + mask)` 每一行的结果。为什么 `diagonal = 1`？如果改成 `diagonal = 0` 会怎样？
+- （c） 对右填充的 token 序列 `c(11, 43, 100, 1, 1)`，`key_padding_mask <- (log_seqs == 1)` 得到的布尔向量是什么？在 `nn_transformer_encoder` 中，`TRUE` 表示“保留”还是“忽略”？如果写成 `log_seqs != 1` 会怎样？
+- （d） 负采样使用
+
+  ```r
+  neg_labels <- torch_randint(low = 2, high = num_items + 2,
+    size = pos_labels$shape, dtype = torch_long())
+  ```
+
+  当 `num_items = 3706` 时，`neg_labels` 的取值范围是什么？`high` 是开区间还是闭区间？这个采样会不会把正样本本身抽成负样本？概率是多少？如何修正？
+- （e） 评估时：
+
+  ```r
+  topk_indices <- torch_topk(scores, k, dim = -1L, largest = TRUE, sorted = TRUE)[[2]]
+  hits <- (topk_indices == 1L)$sum()
+  ```
+
+  为什么可以假设正样本在候选集的第 1 列？如果 `setorder(dt_eval, user_idx, label)`（升序）会怎样？如果一个用户有多个正样本呢？
+- （f） 本章为什么用 Pre-LN（`norm_first = TRUE`）并把 embedding 初始化标准差设为 0.02？如果改成 Post-LN 且用默认初始化，稀疏 ID 特征上可能出现什么现象？
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a）移位与配对。
+
+原始序列：
+
+```r
+seq <- c(10, 42, 99, 205)
+seq <- seq + 1          # 11 43 100 206
+n <- length(seq)        # 4
+tokens <- seq[-n]       # 11 43 100
+labels <- seq[-1]       # 43 100 206
+```
+
+配对：
+
+| 输入 token | 预测 label |
+| :--- | :--- |
+| 11 | 43 |
+| 43 | 100 |
+| 100 | 206 |
+
+最后一个原始物品 205（加 1 后是 206）只作为最后一个 label 出现，不作为输入 token。这是标准的 next-token 训练：用前 $n-1$ 个物品预测第 $2$ 到第 $n$ 个物品。实际训练时序列会被 padding 到 `maxlen`，padding 位置的 label 也是 1，用 `pad_mask <- (pos_labels != 1)` 排除。
+
+（b）causal mask。
+
+```r
+mask <- torch_triu(torch_full(c(4, 4), -Inf), diagonal = 1)
+```
+
+```text
+      [,1]  [,2]  [,3]  [,4]
+[1,]     0  -Inf  -Inf  -Inf
+[2,]     0     0  -Inf  -Inf
+[3,]     0     0     0  -Inf
+[4,]     0     0     0     0
+```
+
+`softmax(0 + mask)` 按行：
+
+```text
+[1,] 1.0000 0.0000 0.0000 0.0000
+[2,] 0.5000 0.5000 0.0000 0.0000
+[3,] 0.3333 0.3333 0.3333 0.0000
+[4,] 0.2500 0.2500 0.2500 0.2500
+```
+
+第 $i$ 行只能看到第 $1$ 到第 $i$ 个位置，不能看未来。`diagonal = 1` 表示“从主对角线上方一格开始置 $-Inf$”，主对角线保留 0，所以每个位置可以看自己。若改成 `diagonal = 0`，主对角线也会被置 $-Inf$，第一行全是 $-Inf$，softmax 得到 `NaN`（全 $-Inf$ 没有归一化常数），整个模型会崩。
+
+（c）padding mask。
+
+对于 `log_seqs = c(11, 43, 100, 1, 1)`：
+
+```r
+log_seqs == 1
+# FALSE FALSE FALSE TRUE TRUE
+```
+
+在 PyTorch / R torch 的 `src_key_padding_mask` 约定中，`TRUE` 表示忽略该位置（它是 padding），`FALSE` 表示保留。因此这里前三个真实 token 参与注意力，后两个 padding 被屏蔽。
+
+如果写成 `log_seqs != 1`，则前三个真实 token 被忽略、padding 被保留，注意力会集中在无意义的 padding 行上；由于 causal mask 仍然存在，第一行只能看到自己（被忽略），输出可能变成 NaN 或完全无信息。
+
+（d）负采样范围与假负样本。
+
+`torch_randint(low = 2, high = num_items + 2)` 在 R torch 中 `high` 是开区间。当 `num_items = 3706` 时：
+
+$$
+\text{neg\_labels}\in\{2,3,\ldots,3707\},
+$$
+
+共 3706 个值。原始物品 ID 是 $1,\ldots,3706$，加 1 后是 $2,\ldots,3707$，正好覆盖全部真实物品；1 是 padding，3708 不会被采到（embedding 表虽然有 3708 行，但最后一行是多余的安全边界）。
+
+这个采样会把正样本本身抽成负样本：每个位置独立均匀地从 3706 个物品中抽一个，抽中当前正样本的概率是
+
+$$
+\frac{1}{3706}=0.0002698\approx0.027\%.
+$$
+
+单看概率很小，但它是概念上的假负样本（false negative）：同一个物品既被当作正例又被当作负例，梯度会互相冲突。严谨的做法是逐位置排除正样本，例如把冲突的负样本重新采样，或做一个不会映射到自身的循环移位：
+
+```r
+# 示意：冲突位置在 2..3707 内循环移位一位
+neg_labels <- torch_where(
+  neg_labels == pos_labels,
+  torch_remainder(neg_labels - 1, num_items) + 2,
+  neg_labels
+)
+```
+
+（实际工程中也可以接受这点噪声，但要知道它的存在；如果正样本很多或物品库很小，影响会放大。）
+
+（e）评估时正样本为什么在第 1 列。
+
+本章构造评估集时先放正样本，再放 99 个负样本：
+
+```r
+dt_eval <- rbindlist(list(dt_eval_pos, dt_eval_neg), use.names = TRUE)
+setorder(dt_eval, user_idx, -label)   # 每个用户正样本在前
+```
+
+`setorder(..., -label)` 按 label 降序，正样本 1 排在负样本 0 前面；随后
+
+```r
+dt_eval[, .(candidates = list(item_idx)), by = user_idx]
+```
+
+按当前行序把候选收进列表，所以每个用户的第 1 个候选就是正样本。`topk_indices == 1L` 检查“正样本是否落在 top-k 中”。
+
+如果改成 `setorder(dt_eval, user_idx, label)`（升序），负样本 0 会排在前面，正样本跑到第 100 列，`topk_indices == 1L` 检查的是某个负样本，指标会完全错误。一个用户有多个正样本时，`(topk_indices == 1L)$sum()` 只检查第 1 列，漏掉其他正样本；这时需要携带每个候选的 label，用 `gather()` 取出 top-k 对应的候选标签，再判断其中是否含正样本（见练习 8(f) 的修复代码）。
+
+（f）Pre-LN 与初始化。
+
+Post-LN 把 LayerNorm 放在残差相加之后：
+
+$$
+\mathbf x_{l+1}=\operatorname{LN}\bigl(\mathbf x_l+F(\mathbf x_l)\bigr).
+$$
+
+深层堆叠时，残差主干的方差会逐层累积，LayerNorm 的梯度容易在反向传播中衰减；在稀疏 ID 特征上，embedding 的梯度本来就很稀疏，模型容易 loss 卡住不降。Pre-LN 把 LayerNorm 放在子层输入之前：
+
+$$
+\mathbf x_{l+1}=\mathbf x_l+F\bigl(\operatorname{LN}(\mathbf x_l)\bigr),
+$$
+
+残差路径上没有任何归一化，梯度可以更直接地回传，通常不需要 warmup 也能稳定训练。把 embedding 初始化标准差限制在 0.02，是为了避免初始阶段不同物品的向量范数过大、点积 logits 方差过高，导致 softmax/BCE 饱和。若用 Post-LN + 默认初始化，常见现象是前几轮 loss 不降、梯度范数很小，或者训练对学习率和 warmup 非常敏感。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：指标、冷启动与多路召回
+
+本章报告的 `HR@10` 为：
+
+$$
+\text{IBCF }0.6445
+<\text{MF }0.6719
+<\text{纯 ID 双塔 }0.7003
+<\text{带特征双塔 }0.7171
+<\text{SASRec }0.8647.
+$$
+
+请讨论：
+
+- （a） 这组数字可以直接横向比较吗？列出至少 4 个可能影响公平性的因素，并设计一个更严格的对比实验。
+- （b） 从 MF 到纯 ID 双塔只提升了约 0.028，但参数量几乎一样。这个提升可能来自什么？什么时候双塔的 MLP 反而只是“多了参数”？
+- （c） 双塔用特征缓解冷启动。但模型仍然为每个用户/物品维护 ID embedding。线上遇到完全未见的 ID 时，R torch 的 `nn_embedding` 会发生什么？你会如何设计 UNK/兜底？
+- （d） SASRec 与 BERT4Rec 分别适合什么场景？在实时推荐中为什么不能直接用 BERT4Rec 的“看未来”能力？
+- （e） 工业界为什么需要多路召回？如果同时有 SASRec、双塔、IBCF 三路候选，如何合并、去重和评估？
+- （f） 1 正 99 负的评估与全库排序相比，会高估还是低估模型？可能引入哪些偏差？如何报告更可信的结果？
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a）公平比较的混杂因素。
+
+这组数字至少受以下因素影响，不能简单当作“模型 A 一定优于模型 B”：
+
+1. 候选集与负样本不同：IBCF/MF/双塔使用同一套 1 正 99 负，SASRec 的候选集来自序列评估，负样本生成方式也可能不同；候选集越简单，指标越高。
+2. 训练预算不同：MF 15 轮、SASRec 40 轮，学习率、优化器、早停策略都不同；没有控制参数量/训练时间。
+3. 超参数未统一调优：embedding 维度、dropout、正则化、负采样比例各自不同；IBCF 甚至没有训练过程。
+4. 单次切分、单次种子：没有重复实验，无法区分真实提升和随机波动；MovieLens 1M 的用户/物品分布也有长尾。
+5. 评估目标不同：`.SD[1]` 取的是最早测试交互，不是最后一次；不同模型可能对“早期测试交互”更友好。
+6. 特征可用性不同：带特征双塔用了性别/年龄/职业/类型，SASRec 只用 ID 序列；这不是纯架构对比。
+
+更严格的实验应固定：同一时间切分、同一候选集（正样本和负样本完全一致）、同一训练/验证/测试划分、同一评估脚本；每个模型独立调参但控制参数量/训练时间；至少 3–5 个随机种子，报告均值 ± 标准差；如果可能，再报告全库排序和 1:99 两种指标。对于“架构是否更好”的因果结论，还要做消融（例如 MF + 同样的 MLP 塔、双塔去掉特征、SASRec 去掉位置编码）。
+
+（b）MF 到纯 ID 双塔的提升来自哪里。
+
+两者参数量几乎一样，差别主要在：
+
+- 双塔把线性点积换成了两层 MLP + ReLU，用户/物品 embedding 先经过非线性变换再点积，表达能力更强；
+- 但 ID embedding 仍然是主要参数来源，MLP 只增加 8,384 个参数，增益可能来自优化路径、初始化、训练细节，而不一定是“双塔”这个结构本身；
+- 0.028 的提升没有置信区间，也可能是单次运行的波动。
+
+如果数据稀疏、ID 特征为主、特征工程有限，MF 的线性结构通常已经很接近上限，MLP 塔可能只是“多了参数、更容易过拟合”。双塔真正发挥优势通常是在多特征、冷启动、需要离线预计算物品向量的场景；如果只有 ID，MF 是更简单、更可解释的基线。
+
+（c）未见 ID 与 UNK 设计。
+
+R torch 的 `nn_embedding` 是 1-based 索引，传入超出 `[1, num_embeddings]` 的 ID 会越界（或触发未定义行为），不会像一些框架那样自动返回零向量。线上遇到新用户/新物品时：
+
+- 在 embedding 表里预留一行 `UNK`（例如索引 1 作为 padding，索引 2 作为 UNK），所有未见 ID 映射到 UNK；
+- 训练时随机把一部分 ID 替换成 UNK（ID dropout），让模型学会只靠特征做预测；
+- 特征侧也要处理未见类别：预留 UNK 类别、使用 hashing trick，或按业务规则回退到“未知”；
+- 如果某物品完全没有特征、也没有历史，只能回退到热门/多样性兜底，并明确这是冷启动策略而不是模型能力。
+
+（d）SASRec 与 BERT4Rec。
+
+- SASRec（GPT 风格，单向）：用过去的行为预测下一个物品，严格 causal，适合实时推荐——用户刚滑过的几个商品就是输入，模型立刻给出下一个候选。
+- BERT4Rec（BERT 风格，双向）：随机 mask 历史中的物品，用前后文还原，适合离线挖掘用户整体兴趣、补全缺失交互、做用户表征；它不能直接用于“下一秒推荐”，因为在实时场景里“未来”的行为还不存在，双向注意力会偷看未来。
+
+实际系统可以把 BERT4Rec 用作离线用户/物品表征或数据清洗，把 SASRec 用作实时序列召回；两者不是互斥关系。
+
+（e）多路召回与合并。
+
+单一路径很难同时覆盖：
+
+- SASRec：短期、实时意图；
+- 双塔：用户画像 + 多特征、可预计算、覆盖全库；
+- IBCF/Graph：长尾、协同关系、可解释的“看了又看”；
+- 热门/运营：保底、探索、业务规则。
+
+合并时通常要做：
+
+1. 去重：同一物品可能被多路召回，按 item_id 合并；
+2. 分数校准：不同模型的分数尺度不同（logit、余弦、命中次数），不能直接相加；可以按路归一化、用排序位置融合（RRF），或训练一个轻量融合模型；
+3. 配额与多样性：给每路保留一定名额，避免一路霸屏；加入类目/作者打散；
+4. 离线评估 + 在线 A/B：离线看每路的覆盖率、新颖性、长尾占比；在线看点击率、停留时长、多样性等业务指标。离线 HR 高不等于线上收益高。
+
+（f）1:99 与全库排序的偏差。
+
+1 正 99 负是一个“小候选集”任务，通常比全库排序容易：负样本只有 99 个，且是随机抽的，模型不需要在 3706 个物品里精确区分。它可能高估模型在真实全库上的召回能力。具体偏差包括：
+
+- 负样本难度偏差：随机负样本通常比“硬负样本”（相似但不相关）容易区分；模型可能学会“排除明显不相关”，而不是精细排序。
+- 流行度偏差：负样本从全部物品抽，热门物品被抽中的概率高；模型可能偏向热门，长尾物品的召回被低估。
+- 冷启动偏差：负样本池包含 39 个训练集从未出现的冷启动物品（约 1.05%），它们的 embedding 没训练好，模型“排错”并不代表真实能力。
+- 采样方差：每个用户只抽一次 99 个负样本，不同种子下指标会波动；单次结果不足以支撑“0.7003 > 0.6719”这样的细粒度结论。
+- HR=Recall：每个用户只有一个正样本时，HR@K 与 Recall@K 数值相同；如果有多个正样本，两者会分叉。
+
+更可信的报告：固定多套负样本（多个种子）并报告均值/置信区间；同时报告全库排序（或至少更大候选集）的 HR/Recall/NDCG；按用户活跃度、物品流行度、冷/温启动分桶；如果做线上决策，最终还是要看 A/B 的业务指标。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：定位并修复本章的六个问题
+
+下面每一小题都对应本章正文或配套脚本中的一个具体问题。请指出“现象、原因、修复”，能跑代码的尽量跑一遍。
+
+- （a） SASRec 中先
+  ```r
+  self$item_emb <- nn_embedding(item_num + 2, hidden_units, padding_idx = 1)
+  nn_init_normal_(self$item_emb$weight, mean = 0, std = 0.02)
+  ```
+  然后 `key_padding_mask <- (log_seqs == 1)`。`nn_init_normal_` 之后，padding 行还是 0 吗？这会影响指标吗？应该怎么改？
+- （b） 正文写“使用 `nn_transformer_decoder_layer`”，但配套脚本用的是 `nn_transformer_encoder_layer`。在 torch 0.17.0 中，`nn_transformer_decoder_layer` 存在吗？应该怎么表述？
+- （c） 正文说 SASRec 的 `drop rate` 是 0.1，脚本里 `dropout_rate <- 0.2`。以哪个为准？读者按正文改成 0.1 会怎样？
+- （d） 训练负采样使用 `sample(..., replace = TRUE)`。这会产生重复负样本吗？在 MovieLens 1M 上大概有多少？应该改成什么？
+- （e） 如果 MF 的 `forward` 漏掉 `squeeze(-1)`，输出形状会怎样？为什么代码不报错？
+- （f） 评估代码用 `(topk_indices == 1L)$sum()` 统计命中。这个写法依赖什么前提？如果候选排序变成负样本在前，或者一个用户有多个正样本，会怎样？
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a）padding 行被初始化覆盖。
+
+`nn_embedding(..., padding_idx = 1)` 在创建时会把第 1 行置 0，但紧接着的 `nn_init_normal_` 会对整个权重矩阵重新做正态初始化，包括第 1 行。实测：
+
+```r
+e <- nn_embedding(5, 3, padding_idx = 1)
+as.numeric(e$weight[1, ])   # 0 0 0
+nn_init_normal_(e$weight, mean = 0, std = 0.02)
+as.numeric(e$weight[1, ])   # 例如 -0.0182 -0.0525 -0.0014
+as.numeric(e(torch_tensor(1L)))  # 同样的非零值
+```
+
+所以 padding 行不再是 0。它通常不会显著影响指标，因为 `key_padding_mask` 会把 padding 位置作为 key 屏蔽掉，真实 token 不会 attend 到它们；评估时也只取最后一个真实位置。但它是一个明确的代码异味：如果之后改了 mask、或把 padding 表示用于其他用途，就会出问题。
+
+修复：初始化后重新把第 1 行置零：
+
+```r
+nn_init_normal_(self$item_emb$weight, mean = 0, std = 0.02)
+with_no_grad({
+  self$item_emb$weight[1, ] <- 0
+})
+```
+
+或者自定义初始化，只对第 2 行到最后一行做正态初始化。不要依赖 `padding_idx` 在后续初始化后仍然保持零。
+
+（b）`nn_transformer_decoder_layer` 不存在。
+
+在 torch 0.17.0 中：
+
+```r
+exists("nn_transformer_decoder_layer")  # FALSE
+exists("nn_transformer_encoder_layer")  # TRUE
+grep("transformer", getNamespaceExports("torch"), value = TRUE)
+# "nn_transformer_encoder_layer" "nn_transformer_encoder"
+```
+
+R torch 0.17.0 只导出 encoder 相关 API，没有 decoder layer/decoder。本章 SASRec 脚本实际使用的是：
+
+```r
+encoder_layer <- nn_transformer_encoder_layer(...)
+self$transformer <- nn_transformer_encoder(encoder_layer, num_layers = num_blocks)
+```
+
+再传入 causal mask。第 9 章也明确说过：`nn_transformer_encoder_layer` + causal mask 在数学上等价于 GPT 的 decoder block。因此正文应改为“使用 `nn_transformer_encoder_layer` 堆叠成 `nn_transformer_encoder`，并传入 causal mask”；如果确实需要 decoder API，得自行实现或确认升级后的 torch 版本是否提供。
+
+（c）dropout 配置不一致。
+
+正文第 569 行说 “drop rate 为 0.1”，但 `code/10_SASrec.R` 中：
+
+```r
+dropout_rate <- 0.2
+```
+
+`nn_dropout(dropout_rate)` 和 `nn_transformer_encoder_layer(dropout = dropout_rate)` 都用 0.2。书中 40 轮训练输出和 0.8647 应来自脚本的 0.2；如果读者按正文改成 0.1，结果不会与书中输出一致。修复：把正文改为 0.2；若要保留 0.1，需要把脚本和所有指标一起重跑并更新。
+
+（d）`replace = TRUE` 的重复负样本。
+
+```r
+dt_train_neg <- train_counts[, .(
+  item_idx = sample(setdiff(...), pos_count, replace = TRUE),
+  label = 0), by = user_idx]
+```
+
+有放回抽样会产生重复的 `(user, item)` 负样本。在 MovieLens 1M 上按本章管线复现：
+
+- 训练正样本 797,758 条，负样本也是 797,758 条；
+- 重复的负样本行约 38,959 条，占负样本的 4.88%；
+- 6040 个用户中有 3285 个至少有一条重复负样本；
+- 平均每个用户 132.08 条正样本。
+
+重复本身不会让代码报错，但会让这些 `(user, item)` 对在损失里被重复计算，相当于给它们加权；同时“抽 pos_count 个负样本”的实际唯一负样本数少于 pos_count。修复：在候选池足够大时改用 `replace = FALSE`：
+
+```r
+sample(setdiff(...), pos_count, replace = FALSE)
+```
+
+MovieLens 1M 的物品库远大于单个用户的 pos_count，`replace = FALSE` 可行；如果某些用户的历史几乎覆盖全库，才需要回退到有放回并去重，或限制负样本数。
+
+（e）漏掉 `squeeze(-1)` 的广播。
+
+`dot_product` 是 $[B]$，`u_b` 和 `i_b` 是 $[B,1]$。R torch 把 $[B]$ 当作 $[1,B]$，与 $[B,1]$ 广播成 $[B,B]$：
+
+```r
+a <- torch_tensor(c(1, 2))                    # [2]
+b <- torch_tensor(matrix(c(3, 4), ncol = 1))  # [2,1]
+a + b
+#  4  5
+#  5  6
+```
+
+输出变成矩阵后，BCE 会把 $B^2$ 个元素都当成独立样本，loss 和梯度都不再是原来的逐样本损失。代码不报错，是因为形状在广播规则下“合法”，但语义已经错了。修复：`squeeze(-1)`，或 `$view(c(B))`。
+
+（f）评估索引假设。
+
+`(topk_indices == 1L)$sum()` 依赖两个前提：
+
+1. 每个用户的候选集里，正样本恰好排在第 1 列；
+2. 每个用户只有一个正样本。
+
+本章通过
+
+```r
+dt_eval <- rbindlist(list(dt_eval_pos, dt_eval_neg), use.names = TRUE)
+setorder(dt_eval, user_idx, -label)
+```
+
+保证正样本在前：`-label` 降序，1 在 0 前面；随后按用户分组收集候选时保留了行序。如果改成 `setorder(dt_eval, user_idx, label)`（升序），负样本在前，正样本在第 100 列，`topk_indices == 1L` 检查的是某个负样本，指标会完全错误。如果一个用户有多个正样本，`sum(topk_indices == 1L)` 只检查第 1 列，会漏掉其他正样本。
+
+修复：不要依赖列位置，显式携带每个候选的 label，按用户取出 top-k 对应的标签：
+
+```r
+# scores: [B, C]；candidate_labels: [B, C]，正样本为 1
+topk_indices <- torch_topk(scores, k, dim = 2, largest = TRUE,
+                           sorted = TRUE)[[2]]       # [B, K]
+topk_labels <- candidate_labels$gather(dim = 2, index = topk_indices)  # [B, K]
+hit <- topk_labels$sum(dim = 2) > 0                  # [B]，是否至少命中一个正样本
+```
+
+这样即使排序变化、或有多个正样本，也不会错。若要做严格的 Recall@K（多正样本），还可以用 `topk_labels$sum(dim = 2) / candidate_labels$sum(dim = 2)` 逐用户计算命中比例。
+
+补充：`HR@10` 与 `Recall@10` 的命名。
+
+本章 MF/双塔用 `HR@10`，SASRec 输出用 `Recall@10`。在每个用户只有一个正样本的设置下，两者数值相同：
+
+$$
+\text{HR@}K=\text{Recall@}K=\frac{1}{U}\sum_{u=1}^U \mathbf 1[\text{正样本}\in \text{Top-}K_u].
+$$
+
+所以这不是数值错误，但同一章里最好统一叫法；如果将来一个用户有多个正样本，HR（是否至少命中一个）和 Recall（命中比例）就会分叉，必须在文中说明。
+
+:::
+
+---
+
+## 附：本章关键数字速查
+
+| 项目 | 数值 |
+| :--- | :--- |
+| MovieLens 1M 用户 / 物品 / 评分 | 6040 / 3706 / 1,000,209 |
+| MF 参数量（$d=32$，含偏置） | 321,619 |
+| MF 参数量（不含偏置） | 311,872 |
+| 纯 ID 双塔参数量 | 320,256 |
+| 带特征双塔参数量 | 322,688 |
+| 测试集每个用户的平均交互条数（过滤冷启动后） | 33.51 |
+| `.SD[1]` 与 `.SD[.N]` 正样本不同的用户 | 6040 / 6040（100%） |
+| 训练负样本重复行占比 | 4.88% |
+| 负样本池中的冷启动物品 | 39 个（约 1.05%） |
+| 随机打分器 `HR@10` 期望 | 0.1 |
+| SASRec 负采样假负样本概率 | $1/3706\approx0.027\%$ |

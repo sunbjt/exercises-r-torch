@@ -1,0 +1,1028 @@
+# 12 变分自编码器 {.unnumbered}
+
+本章从自编码器（AE）的局限出发，经过 KL 散度与重参数化技巧，最后落到 MNIST 生成和 ECG5000 异常检测。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：对角高斯的 KL 解析解与梯度；重参数化的均值、方差与梯度路径；ELBO、β 与损失归一化。
+- 编程实践（练习 4–6）：从零实现 VAE 并核对形状与参数量；ECG5000 的 MAE 异常评分、阈值与 AUC；`eval()` 下仍然采样的问题与确定性重建。
+- 开放思考（练习 7）：VAE 生成为什么偏模糊、后验坍塌、以及 VAE/AE/GAN/扩散模型的取舍。
+- 纠错与陷阱（练习 8）：`eval()` 仍采样、dataset 形状差异、不同损失量级不可比。
+
+建议用时约 3 小时。练习 1、2、4 可以先做；练习 5、6 适合对照 `code/12_vae_ECG5000.R` 和 `code/12_vae_mnist.R` 阅读；练习 3、7、8 建议在复现实验后完成。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过；神经网络训练受随机种子、设备和轮数影响，答案里的具体数字用于量级判断，不应当作唯一标准。
+
+## 一、概念与推导
+
+### 练习 1：KL 散度的解析解、数值与梯度
+
+设编码器对某个样本输出对角高斯
+
+$$
+q(z\mid x)=\mathcal N\bigl(\mu,\operatorname{diag}(\sigma^2)\bigr),
+\qquad
+p(z)=\mathcal N(0,I_J),
+$$
+
+其中 $J=20$，记 `logvar` $=\log\sigma^2$（逐元素）。
+
+- （a） 从定义
+  $$
+  D_{KL}\bigl(q\,\|\,p\bigr)
+  =\int q(z)\log\frac{q(z)}{p(z)}\,dz
+  $$
+  推导
+  $$
+  D_{KL}=-0.5\sum_{i=1}^{J}
+  \bigl(1+\log\sigma_i^2-\mu_i^2-\sigma_i^2\bigr).
+  $$
+- （b） 取所有维度 $\mu_i=0.5$、$\log\sigma_i^2=-1$，计算每一维的 KL 与总和；再取 $\mu_i=0$、$\log\sigma_i^2=0$，KL 是多少？验证 KL 非负。
+- （c） 求 $\partial D_{KL}/\partial \mu_i$ 与 $\partial D_{KL}/\partial \log\sigma_i^2$。当 $\log\sigma_i^2=0$ 时，后者是多少？这说明方差为 1 时 KL 对该参数处于什么位置？取 $\log\sigma_i^2=2$ 时梯度又指向哪个方向？
+- （d） 取 $J=1$、$\mu=0$、$\sigma=2$，分别计算 $D_{KL}(q\|p)$ 与 $D_{KL}(p\|q)$。两者相等吗？VAE 用的是哪一个方向，为什么？
+- （e） 本章代码写成
+  ```r
+  KLD <- -0.5 * torch_sum(1 + logvar - mu$pow(2) - logvar$exp())
+  ```
+  请核对符号、求和范围与单位（nat 还是 bit）。
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a）推导。
+
+对一维高斯，
+
+$$
+\log q(z)=-\frac12\log(2\pi\sigma^2)-\frac{(z-\mu)^2}{2\sigma^2},
+\qquad
+\log p(z)=-\frac12\log(2\pi)-\frac{z^2}{2}.
+$$
+
+于是
+
+$$
+\begin{aligned}
+D_{KL}
+&=\mathbb E_q[\log q(z)-\log p(z)]\\
+&=\mathbb E_q\left[
+-\frac12\log\sigma^2-\frac{(z-\mu)^2}{2\sigma^2}+\frac{z^2}{2}
+\right]\\
+&=-\frac12\log\sigma^2-\frac{\sigma^2}{2\sigma^2}
++\frac{\mu^2+\sigma^2}{2}\\
+&=-\frac12\bigl(1+\log\sigma^2-\mu^2-\sigma^2\bigr).
+\end{aligned}
+$$
+
+这里用了 $\mathbb E_q[(z-\mu)^2]=\sigma^2$ 与 $\mathbb E_q[z^2]=\mu^2+\sigma^2$。对 $J$ 个维度求和即得题中公式。
+
+（b）数值。
+
+每一维
+
+$$
+-0.5\bigl(1+\log(e^{-1})-0.5^2-e^{-1}\bigr)
+=-0.5\bigl(1-1-0.25-0.367879\bigr)
+=0.3089397.
+$$
+
+20 维合计
+
+$$
+20\times0.3089397=\boxed{6.178794}.
+$$
+
+当 $\mu_i=0$、$\log\sigma_i^2=0$ 时，每一维都是
+
+$$
+-0.5(1+0-0-1)=0,
+$$
+
+所以总和为 0。这也说明 $q=p$ 时 KL 达到最小值。
+
+非负性可以直接看每一维：
+
+$$
+D_{KL}^{(i)}
+=\frac12\Bigl[\mu_i^2+\bigl(\sigma_i^2-1-\log\sigma_i^2\bigr)\Bigr].
+$$
+
+第一项 $\mu_i^2\ge0$；第二项中令 $u=\sigma_i^2>0$，函数 $u-1-\log u$ 在 $u=1$ 处取最小值 0（因为导数 $1-1/u$ 在 $u=1$ 变号）。所以每一项都非负，KL 非负。
+
+（c）梯度。
+
+由公式
+
+$$
+\frac{\partial D_{KL}}{\partial \mu_i}=\mu_i,
+\qquad
+\frac{\partial D_{KL}}{\partial \log\sigma_i^2}
+=\frac12\bigl(e^{\log\sigma_i^2}-1\bigr)
+=\frac12(\sigma_i^2-1).
+$$
+
+当 $\log\sigma_i^2=0$ 时，$\partial D_{KL}/\partial\log\sigma_i^2=0$：方差为 1 是 KL 对 log 方差的驻点。这也和“KL 在 $q=p$ 时最小”一致。
+
+当 $\log\sigma_i^2=2$ 时，$\sigma_i^2=e^2\approx7.389056$，梯度为
+
+$$
+\frac12(e^2-1)\approx3.194528>0.
+$$
+
+正梯度意味着减小 $\log\sigma_i^2$ 会降低 KL，即把过大的方差往 1 的方向拉。
+
+（d）两个方向不相等。
+
+取 $q=\mathcal N(0,4)$、$p=\mathcal N(0,1)$：
+
+$$
+D_{KL}(q\|p)
+=-0.5(1+\log4-0-4)
+=0.8068528,
+$$
+
+$$
+D_{KL}(p\|q)
+=-0.5\left(1+\log\frac14-0-\frac14\right)
+=0.3181472.
+$$
+
+KL 不是距离，没有对称性。VAE 最小化的是
+
+$$
+D_{KL}\bigl(q(z\mid x)\,\|\,p(z)\bigr),
+$$
+
+它来自 ELBO 的推导（见练习 3），方向是“用 $q$ 去覆盖 $p$ 的支撑集”。这个方向对 $q$ 把概率质量放到 $p$ 很小的区域惩罚很大，倾向于让 $q$ 收缩到 $p$ 的某个模态附近（zero-forcing / mode-seeking）；反过来 $D_{KL}(p\|q)$ 会鼓励 $q$ 覆盖 $p$ 的所有模态（mass-covering），但在 VAE 中不方便从 ELBO 自然得到。
+
+（e）代码核对。
+
+代码中的 `logvar` 就是 $\log\sigma^2$，`torch_sum` 对当前 batch 的所有样本、所有维度求和：
+
+$$
+\text{KLD}
+=-0.5\sum_{b=1}^{B}\sum_{i=1}^{J}
+\bigl(1+\text{logvar}_{bi}-\mu_{bi}^2-e^{\text{logvar}_{bi}}\bigr).
+$$
+
+符号与公式一致：`1 + logvar - mu^2 - exp(logvar)` 前面乘 $-0.5$。单位是 nat，因为公式里的对数是自然对数。若要换成 bit，需要除以 $\ln2$（约乘 1.4427）。注意这是 batch 总和，不是每样本平均；与重建损失比较时必须使用同一归一化口径。
+
+:::
+
+### 练习 2：重参数化技巧与梯度
+
+设 $\epsilon\sim\mathcal N(0,I_J)$，编码器输出 $\mu$ 与 $\text{logvar}=\log\sigma^2$，重参数化为
+
+$$
+z=\mu+\sigma\odot\epsilon,
+\qquad
+\sigma=e^{0.5\,\text{logvar}}.
+$$
+
+- （a） 证明 $\mathbb E[z]=\mu$、$\operatorname{Var}(z)=\sigma^2$（逐元素）。若 $\sigma$ 是向量，协方差矩阵是什么？
+- （b） 取 `logvar` $=(-2,0,2)$，计算对应的标准差 $\sigma$ 与方差 $\sigma^2$。
+- （c） 设 $L(z)$ 是标量损失。证明
+  $$
+  \frac{\partial L}{\partial\mu}=\frac{\partial L}{\partial z},
+  \qquad
+  \frac{\partial L}{\partial\,\text{logvar}}
+  =0.5\,\epsilon\odot e^{0.5\,\text{logvar}}\odot\frac{\partial L}{\partial z}.
+  $$
+  为什么可以把 $\epsilon$ 当作常数？如果直接把采样写成 `z <- torch_normal(mu, std)`，梯度会怎样？
+- （d） 取 $\mu=(0.5,-0.2)$、`logvar` $=(-1,0.3)$、$\epsilon=(1.2,-0.7)$，令 $L=\sum_i z_i^2$。手算 $z$、$\partial L/\partial\mu$、$\partial L/\partial\,\text{logvar}$，并用 torch 的 `backward()` 验证。
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a）均值与方差。
+
+由线性性，
+
+$$
+\mathbb E[z]=\mathbb E[\mu+\sigma\odot\epsilon]=\mu+\sigma\odot\mathbb E[\epsilon]=\mu.
+$$
+
+由于 $\epsilon$ 的各维独立且方差为 1，
+
+$$
+\operatorname{Var}(z_i)=\sigma_i^2\operatorname{Var}(\epsilon_i)=\sigma_i^2.
+$$
+
+写成矩阵：
+
+$$
+\operatorname{Cov}(z)=\operatorname{diag}(\sigma_1^2,\dots,\sigma_J^2).
+$$
+
+（b）标准差与方差。
+
+$$
+\sigma=e^{0.5\,\text{logvar}},
+\qquad
+\sigma^2=e^{\text{logvar}}.
+$$
+
+| `logvar` | $\sigma=e^{0.5\text{logvar}}$ | $\sigma^2=e^{\text{logvar}}$ |
+|---:|---:|---:|
+| $-2$ | $0.367879$ | $0.135335$ |
+| $0$ | $1$ | $1$ |
+| $2$ | $2.718282$ | $7.389056$ |
+
+（c）梯度。
+
+对每个元素，
+
+$$
+z_i=\mu_i+\epsilon_i e^{0.5\,\text{logvar}_i}.
+$$
+
+因此
+
+$$
+\frac{\partial z_i}{\partial\mu_i}=1,
+\qquad
+\frac{\partial z_i}{\partial\,\text{logvar}_i}
+=\epsilon_i\cdot0.5\,e^{0.5\,\text{logvar}_i}
+=0.5\,\epsilon_i\sigma_i.
+$$
+
+链式法则给出题中两式。$\epsilon$ 是从标准正态分布独立抽出的随机数，不依赖 $\mu$、`logvar` 或网络参数；在反向传播时把它看成常数（stop-gradient），随机性被隔离在 $\epsilon$ 上，梯度仍然可以穿过加法和乘法回到编码器。
+
+如果直接写 `z <- torch_normal(mu, std)`，采样操作本身对 `mu`、`std` 没有可用的重参数化梯度；计算图会在随机节点处断开，编码器收不到有意义的梯度。重参数化的作用就是把“随机采样”改写成“固定噪声 + 可微变换”。
+
+（d）手算与 torch 验证。
+
+先算标准差：
+
+$$
+\sigma_1=e^{-0.5}=0.606531,
+\qquad
+\sigma_2=e^{0.15}=1.161834.
+$$
+
+于是
+
+$$
+z_1=0.5+1.2\times0.606531=1.227837,
+$$
+
+$$
+z_2=-0.2+(-0.7)\times1.161834=-1.013284.
+$$
+
+损失 $L=z_1^2+z_2^2$，所以
+
+$$
+\frac{\partial L}{\partial z}=2z=(2.455674,-2.026568).
+$$
+
+对 $\mu$ 的梯度就是 $2z$。对 `logvar`：
+
+$$
+\frac{\partial L}{\partial\,\text{logvar}_1}
+=2z_1\cdot0.5\epsilon_1\sigma_1
+=2.455674\times0.5\times1.2\times0.606531
+=0.893665,
+$$
+
+$$
+\frac{\partial L}{\partial\,\text{logvar}_2}
+=(-2.026568)\times0.5\times(-0.7)\times1.161834
+=0.824088.
+$$
+
+torch 验证：
+
+```r
+library(torch)
+
+mu <- torch_tensor(c(0.5, -0.2), requires_grad = TRUE)
+logvar <- torch_tensor(c(-1, 0.3), requires_grad = TRUE)
+eps <- torch_tensor(c(1.2, -0.7))
+
+z <- mu + eps * torch_exp(0.5 * logvar)
+loss <- torch_sum(z^2)
+loss$backward()
+
+as.numeric(z)
+# [1]  1.227837 -1.013284
+as.numeric(mu$grad)
+# [1]  2.455674 -2.026568
+as.numeric(logvar$grad)
+# [1] 0.8936649 0.8240876
+```
+
+:::
+
+### 练习 3：ELBO、β 与损失归一化
+
+- （a） 从
+  $$
+  \log p(x)=\log\int p(x\mid z)p(z)\,dz
+  $$
+  出发，引入任意近似后验 $q(z\mid x)$，证明
+  $$
+  \log p(x)
+  =\underbrace{\mathbb E_{q(z\mid x)}\bigl[\log p(x\mid z)\bigr]
+  -D_{KL}\bigl(q(z\mid x)\,\|\,p(z)\bigr)}_{\text{ELBO}}
+  +D_{KL}\bigl(q(z\mid x)\,\|\,p(z\mid x)\bigr).
+  $$
+- （b） 说明为什么最小化负 ELBO 就得到“重建损失 + KL”。高斯解码器（固定方差）与伯努利解码器分别对应什么重建损失？本章 MNIST 用 BCE、ECG 用 MSE，分别对应哪种假设？
+- （c） β-VAE 的目标是
+  $$
+  \mathcal L=\mathcal L_{\text{recon}}+\beta D_{KL}.
+  $$
+  $\beta>1$ 与 $\beta<1$ 分别会带来什么？什么是后验坍塌（posterior collapse）？KL 项在其中扮演什么角色？
+- （d） 如果 $\beta=0$ 或 $\beta\to\infty$，潜在空间和生成能力分别会怎样？
+- （e） 本章 MNIST 的损失是 batch 内求和，ECG 的损失是求和后除以 batch size。这会改变最优解吗？会改变梯度尺度吗？可以把 MNIST 的 13,000 和 ECG 的 200 直接比较吗？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a）ELBO 分解。
+
+对任意 $q(z\mid x)>0$，
+
+$$
+\begin{aligned}
+\log p(x)
+&=\log\int p(x,z)\,dz\\
+&=\log\int q(z\mid x)\frac{p(x,z)}{q(z\mid x)}\,dz\\
+&\ge \int q(z\mid x)\log\frac{p(x,z)}{q(z\mid x)}\,dz\\
+&=\int q(z\mid x)\log\frac{p(x\mid z)p(z)}{q(z\mid x)}\,dz\\
+&=\mathbb E_q[\log p(x\mid z)]
+-D_{KL}\bigl(q(z\mid x)\,\|\,p(z)\bigr).
+\end{aligned}
+$$
+
+不等号来自 Jensen（$\log$ 是凹函数）。把 KL 的“缺口”写出来：
+
+$$
+\begin{aligned}
+\log p(x)-\text{ELBO}
+&=\int q(z\mid x)\log\frac{q(z\mid x)}{p(z\mid x)}\,dz\\
+&=D_{KL}\bigl(q(z\mid x)\,\|\,p(z\mid x)\bigr)\ge0.
+\end{aligned}
+$$
+
+所以最大化 ELBO 等价于最小化负 ELBO，同时逼近真实后验。
+
+（b）重建项。
+
+负 ELBO 为
+
+$$
+-\text{ELBO}
+=-\mathbb E_q[\log p(x\mid z)]
++D_{KL}\bigl(q(z\mid x)\,\|\,p(z)\bigr).
+$$
+
+第一项是负对数似然，第二项是 KL。
+
+- 若 $p(x\mid z)$ 是固定方差的高斯，$-\log p(x\mid z)$ 与 $\|x-\hat x\|^2$ 成正比，等价于 MSE；
+- 若 $x$ 是二值或 $[0,1]$ 上的像素，$p(x\mid z)$ 取伯努利/独立二项，$-\log p(x\mid z)$ 就是 BCE。
+
+MNIST 像素被缩放到 $[0,1]$，解码器输出经过 sigmoid，使用 BCE；ECG 是标准化后的连续值，使用 MSE。严格说，MNIST 的像素不是纯 0/1，但 `nnf_binary_cross_entropy` 允许目标在 $[0,1]$ 内，这等价于对每个像素做软标签的交叉熵，仍然是一个合法的伯努利似然（把灰度值解释为像素为 1 的概率）。
+
+（c）β 与后验坍塌。
+
+$\beta>1$ 加强 KL 正则：潜在分布更接近 $N(0,1)$，不同样本的编码更拥挤、更平滑，可能带来更好的解耦（disentanglement），但重建更模糊，严重时 decoder 干脆忽略 $z$。
+
+$\beta<1$ 减弱 KL：重建更清晰，但潜在空间可能不再连续，先验采样生成的质量下降。
+
+后验坍塌指
+
+$$
+q(z\mid x)\approx p(z)\quad\text{对所有 }x,
+$$
+
+即编码器输出的分布与输入无关，KL 项接近 0，decoder 只能依靠自身的先验（或直接输出平均图像）来重建。此时 KL 很小、损失曲线可能“很好看”，但潜变量没有信息。常见原因：KL 权重过大、decoder 太强（例如自回归 decoder）、潜变量维度过高。检测方法包括看每个维度的 KL、互信息、以及固定 $x$ 改变 $z$ 时输出是否变化。常见缓解手段有 β annealing（从小逐渐增大 β）、free bits（给每个维度设 KL 下限，低于下限的部分不惩罚）、减弱 decoder、skip connection 等。
+
+（d）两个极端。
+
+$\beta=0$：KL 项消失，VAE 退化为带噪声的普通 AE。重建可以很好，但 $q(z\mid x)$ 不受先验约束，潜在空间可能不连续；从 $N(0,1)$ 采样再解码，生成质量没有保证。
+
+$\beta\to\infty$：KL 主导，$q(z\mid x)$ 被强行压到 $N(0,1)$，$z$ 与 $x$ 几乎独立，decoder 只能输出训练集的某种平均，重建和生成都会很差。这就是后验坍塌的极端情形。
+
+（e）归一化。
+
+把一个 batch 的损失整体乘以常数 $1/B$ 不会改变该 batch 上的最优解（对固定 $B$），但会改变梯度尺度，从而改变有效学习率；如果使用自适应优化器，影响会被部分吸收，但仍会影响数值稳定性和不同损失项的相对权重。
+
+更重要的是两项之间的相对归一化。MNIST 代码是
+
+$$
+\text{BCE}_{\text{sum}}+\text{KL}_{\text{sum}},
+$$
+
+ECG 代码是
+
+$$
+\frac{\text{MSE}_{\text{sum}}+\text{KL}_{\text{sum}}}{B}.
+$$
+
+前者是 batch 总和，后者是每样本平均。若把 MNIST 的 13,000 与 ECG 的 200 直接比较，会得到“ECG 模型好得多”的错误结论：两者输入维度不同（784 vs 140）、损失类型不同（BCE vs MSE）、归一化口径也不同。要做有意义的比较，应统一到每像素/每时间步或每样本的尺度，并且最好用下游指标（重建误差、AUC、FID 等），而不是原始 loss。
+
+一个常见的实现错误是：把重建损失改成 `reduction = "mean"`，却仍然保留 KL 的 `sum`。这样 KL 相对重建被放大了 $B\cdot784=100{,}352$ 倍（MNIST，$B=128$），等价于一个巨大的 β，很容易导致后验坍塌。正确做法是两者都取 `sum` 再除以 batch size，或者重建取 `mean`、KL 取 `sum / (B * D)`，保持同一尺度。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：从零实现 VAE：形状、参数量与损失
+
+下面的骨架省略了 `reparameterize`、`forward` 和损失函数：
+
+```r
+vae_module <- nn_module(
+  "VAE",
+  initialize = function(input_dim = 784, hidden_dim = 400, latent_dim = 20) {
+    self$fc1        <- nn_linear(input_dim, hidden_dim)
+    self$fc2_mu     <- nn_linear(hidden_dim, latent_dim)
+    self$fc2_logvar <- nn_linear(hidden_dim, latent_dim)
+    self$fc3        <- nn_linear(latent_dim, hidden_dim)
+    self$fc4        <- nn_linear(hidden_dim, input_dim)
+  },
+  reparameterize = function(mu, logvar) {
+    # 补全
+  },
+  forward = function(x) {
+    # 补全：展平 -> 编码 -> 采样 -> 解码 -> 返回 list
+  }
+)
+```
+
+- （a） 补全 `reparameterize` 与 `forward`，并列出 batch size $B=128$ 时每一步的形状。若 dataset 返回的是 `[1, 28, 28]` 而不是 `[1, 1, 28, 28]`，形状会怎样变化？`view(c(-1, 784))` 还能用吗？
+- （b） 计算这个 VAE 的参数量（所有 `nn_linear` 都带偏置）。如果把所有偏置去掉，参数量是多少？两者相差多少，差在哪里？
+- （c） 假设解码器对每个像素都输出 $p=0.5$，目标像素 $y\in[0,1]$。证明单像素 BCE 恒为 $\ln2$，并计算单张图（784 像素）与一个 batch（128 张）的 BCE。正文写“约 69,543”，与精确值差多少？为什么？
+- （d） 正文说“假设每个像素点误差很小，比如 0.1，那么一个 batch 的重建误差约为 10,035”。10,035 是怎么算出来的？它是 BCE 还是 L1？对二值目标、$p=0.1$（或 $y=1,p=0.9$）计算精确 BCE，并与 10,035 比较。20 轮训练后实测 BCE 约为 9,865，这说明 0.1 的估计处于什么量级？
+- （e） 如果把 `nnf_binary_cross_entropy(..., reduction = "sum")` 改成 `"mean"`，而 KL 仍然用 `torch_sum`，会发生什么？应该怎样配套修改？
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）补全代码与形状。
+
+```r
+vae_module <- nn_module(
+  "VAE",
+  initialize = function(input_dim = 784, hidden_dim = 400, latent_dim = 20) {
+    self$fc1        <- nn_linear(input_dim, hidden_dim)
+    self$fc2_mu     <- nn_linear(hidden_dim, latent_dim)
+    self$fc2_logvar <- nn_linear(hidden_dim, latent_dim)
+    self$fc3        <- nn_linear(latent_dim, hidden_dim)
+    self$fc4        <- nn_linear(hidden_dim, input_dim)
+  },
+  reparameterize = function(mu, logvar) {
+    std <- torch_exp(0.5 * logvar)
+    eps <- torch_randn_like(std)
+    mu + eps * std
+  },
+  forward = function(x) {
+    x_flat <- x$view(c(-1, 784))
+    h <- torch_relu(self$fc1(x_flat))
+    mu <- self$fc2_mu(h)
+    logvar <- self$fc2_logvar(h)
+    z <- self$reparameterize(mu, logvar)
+    recon <- torch_sigmoid(
+      self$fc4(torch_relu(self$fc3(z)))
+    )
+    list(recon, mu, logvar)
+  }
+)
+```
+
+损失：
+
+```r
+vae_loss <- function(predictions, targets) {
+  recon_x <- predictions[[1]]
+  mu      <- predictions[[2]]
+  logvar  <- predictions[[3]]
+
+  targets_flat <- targets$view(c(-1, 784))
+
+  BCE <- nnf_binary_cross_entropy(
+    recon_x, targets_flat, reduction = "sum"
+  )
+  KLD <- -0.5 * torch_sum(
+    1 + logvar - mu$pow(2) - logvar$exp()
+  )
+  BCE + KLD
+}
+```
+
+形状（$B=128$）：
+
+| 步骤 | 形状 |
+|---|---|
+| 输入 `x` | `[128, 1, 28, 28]` |
+| `x_flat` | `[128, 784]` |
+| `h` | `[128, 400]` |
+| `mu`, `logvar` | `[128, 20]` |
+| `z` | `[128, 20]` |
+| `recon` | `[128, 784]` |
+| `targets_flat` | `[128, 784]` |
+
+如果 dataset 返回 `[1, 28, 28]`（例如正文的 `self$data[i, ..]`），dataloader 拼出的 batch 是 `[128, 1, 28, 28]`；如果返回 `[1, 1, 28, 28]`（脚本里的 `drop = FALSE`），batch 是 `[128, 1, 1, 28, 28]`。两种情况下 `view(c(-1, 784))` 都得到 `[128, 784]`，所以这个纯 MLP 的 VAE 都能跑。差别只在多出来的单例维度；如果以后换成卷积层，`nn_conv2d` 需要 4 维输入，`[B, 1, 1, 28, 28]` 就会多一维而报错。正文与脚本的写法不同，但都不是本例的 bug。
+
+（b）参数量。
+
+| 层 | 计算 | 参数 |
+|---|---:|---:|
+| `fc1` | $784\times400+400$ | 314,000 |
+| `fc2_mu` | $400\times20+20$ | 8,020 |
+| `fc2_logvar` | $400\times20+20$ | 8,020 |
+| `fc3` | $20\times400+400$ | 8,400 |
+| `fc4` | $400\times784+784$ | 314,384 |
+| 合计 | | 652,824 |
+
+去掉偏置：
+
+$$
+784\cdot400+400\cdot20+400\cdot20+20\cdot400+400\cdot784
+=313{,}600+8{,}000+8{,}000+8{,}000+313{,}600
+=\boxed{651{,}200}.
+$$
+
+相差
+
+$$
+652{,}824-651{,}200=1{,}624
+=400+20+20+400+784,
+$$
+
+正好是五层偏置的元素个数。
+
+（c）$p=0.5$ 的 BCE。
+
+对任意 $y\in[0,1]$，
+
+$$
+-y\log(0.5)-(1-y)\log(0.5)
+=(y+1-y)\ln2
+=\ln2\approx0.693147.
+$$
+
+所以单像素 BCE 与 $y$ 无关，恒为 $\ln2$。单张图：
+
+$$
+784\ln2=543.4274.
+$$
+
+一个 batch：
+
+$$
+128\times784\ln2=69{,}558.71.
+$$
+
+正文用 $\ln2\approx0.693$ 计算：
+
+$$
+0.693\times784\times128=69{,}543.94,
+$$
+
+与精确值相差约 15，相对误差约 $0.02\%$。这是三位小数近似造成的，不是概念错误；正文说“约 69,543”可以接受，但更准确的写法是 69,559。
+
+（d）10,035 的口径。
+
+$$
+0.1\times784\times128=10{,}035.2.
+$$
+
+这是把“每个像素误差 0.1”直接当成 L1/MAE 后乘以元素个数，不是 BCE。对二值目标，若 $y=0$、预测 $p=0.1$，则
+
+$$
+\text{BCE}=-\log(0.9)=0.1053605,
+$$
+
+一个 batch 为
+
+$$
+0.1053605\times784\times128=10{,}573.14.
+$$
+
+若 $y=1$、预测 $p=0.9$，结果相同。所以精确 BCE 比 10,035 高约 5.4%。20 轮训练后实测 BCE 约 9,865，折合每像素
+
+$$
+\frac{9865}{128\times784}=0.0983,
+$$
+
+确实接近 0.1。也就是说，正文的 0.1 是一个数量级估计：它把每像素 BCE 近似成绝对误差，数值上碰巧接近，但两种损失的定义不同，不能把“误差 0.1”和“BCE=0.1”当成同一件事。
+
+（e）`mean` 与 `sum` 的配套。
+
+若重建损失改成 `reduction = "mean"`，BCE 会变成“每像素平均”，大约是原来的 $1/(B\cdot784)$。而 KL 仍然用 `torch_sum`，是 batch 总和。于是 KL 相对于重建被放大了 $B\cdot784=100{,}352$ 倍（严格说，KL 没有按像素平均，而重建被平均了）。这等价于一个极大的 β，编码器会被强烈压向先验，容易出现后验坍塌。
+
+两种正确的配套方式：
+
+1. 重建与 KL 都用 `sum`，最后整体除以 `B`：
+   ```r
+   (BCE_sum + KL_sum) / x$size(1)
+   ```
+   这正是 ECG 代码的写法。
+2. 重建用 `mean`（对 $B\cdot784$ 个元素平均），KL 也除以 $B\cdot784$：
+   ```r
+   BCE_mean + KL_sum / (x$size(1) * 784)
+   ```
+   或者重建用 `mean`、KL 用 `sum / B`，并接受两项的相对权重不同；这时必须把 KL 的系数当作超参数重新调。
+
+无论选哪种，两项必须使用同一套归一化逻辑，否则“β=1”只是字面上的 1，实际权重并不是 1。
+
+:::
+
+### 练习 5：ECG5000 异常检测：MAE、阈值与 AUC
+
+本章用 UCR ECG5000 做半监督异常检测：训练集只放正常心跳，验证集混合正常与异常。
+
+- （a） 数据共有 5000 条、每条 140 个时间步。正常（Class 1）2919 条，异常（Class 2–5）2081 条。按脚本“80% 正常样本做训练，剩余正常 + 全部异常做验证”，计算训练集、验证集以及验证集中两类的数量。为什么不能把异常样本放进训练集？
+- （b） 写出从 `reconstructions` 到异常得分、阈值 0.5、混淆矩阵、TPR/FPR 与 AUC 的代码。参考运行中，阈值 0.5 大约把 5% 的正常样本和 99% 的异常样本判为异常，AUC 约 0.986；正常样本得分的 95% 分位数约 0.493。解释为什么 0.5 在这组数据上是一个“差不多”的阈值，但不应写死。
+- （c） 标准化时为什么只能用训练集的均值和标准差？如果用全部数据（含验证集）计算，会带来什么后果？
+- （d） 异常得分用 MAE（`rowMeans(abs(diff))`）而不是 MSE。两者对异常的形状有什么不同偏好？如果异常是短时、大幅度的尖峰，哪一个更敏感？如果是长时间的小偏移呢？
+- （e） 验证集的类别比例约为 584:2081（正常:异常），准确率适合作为评价指标吗？应该看什么？
+- （f） 重建式异常检测有哪些固有局限？举一个“波形明显异常但重构误差不大”的例子，并说明如何缓解。
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a）划分与数量。
+
+正常样本 2919 条，80%：
+
+$$
+n_{\text{train}}=\operatorname{round}(2919\times0.8)=2335.
+$$
+
+剩余正常：
+
+$$
+2919-2335=584.
+$$
+
+验证集：
+
+$$
+584+2081=2665.
+$$
+
+所以
+
+- 训练集：2335 条，全部正常；
+- 验证集：2665 条，其中正常 584、异常 2081。
+
+如果训练集混入异常，VAE 会把异常也当作“正常世界”的一部分去重建。异常样本虽然千奇百怪，但模型一旦见过某类异常，就会降低对该类的重建误差，异常得分被拉低；而且异常类内部的异质性会让模型把容量浪费在拟合异常上。半监督异常检测的核心假设是：只用正常数据定义“正常流形”，异常因为远离流形而重建失败。
+
+（b）评分、阈值与指标。
+
+```r
+# reconstructions 与 x_valid_scaled 必须逐行对齐
+abs_diff <- abs(x_valid_scaled - reconstructions)
+anomaly_scores <- rowMeans(abs_diff)
+
+pred <- anomaly_scores > 0.5
+
+table(truth = y_valid_labels, pred = pred)
+
+tpr <- mean(pred[y_valid_labels == 1])  # 异常被抓住的比例
+fpr <- mean(pred[y_valid_labels == 0])  # 正常被误报的比例
+
+# AUC（rank 形式）
+auc <- function(score, y) {
+  n1 <- sum(y == 1)
+  n0 <- sum(y == 0)
+  (sum(rank(score)[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+auc(anomaly_scores, y_valid_labels)
+```
+
+参考运行（R 4.6.1、torch 0.17.0、50 轮、seed 123）大约得到：
+
+```text
+threshold 0.5: 正常被判异常约 5.0%，异常被判异常约 99.3%
+AUC ≈ 0.986
+正常得分 95% 分位数 ≈ 0.493
+异常得分中位数 ≈ 0.92
+```
+
+阈值 0.5 之所以“差不多”，是因为它恰好落在正常得分分布的右尾附近（约 95% 分位），同时远低于异常得分的主体。但这不是普适常数：换数据、换种子、换训练轮数，分布会移动。更稳妥的做法是：
+
+1. 在只含正常样本的校准集上取高分位数（如 95% 或 99%）作为阈值；
+2. 或根据业务成本选择阈值（漏报 vs 误报的代价）；
+3. 报告不同阈值下的 TPR/FPR、PR-AUC，而不是只报一个点。
+
+（c）防泄露。
+
+标准化参数（每列的均值和标准差）必须只从训练集估计，然后原封不动地应用到验证集和未来数据。若用全部数据（含验证集）计算，验证集的分布信息（包括异常样本的均值、方差）就进入了预处理，等于让模型“提前看到”验证集。后果是验证误差/异常得分偏乐观，部署到真正的新数据上会变差。异常检测尤其敏感：异常样本可能显著改变某些时间步的均值和方差，用它们做标准化会削弱异常与正常之间的差异。
+
+（d）MAE 与 MSE。
+
+对一个长度为 $T$ 的序列，
+
+$$
+\text{MAE}=\frac1T\sum_{t=1}^T|x_t-\hat x_t|,
+\qquad
+\text{MSE}=\frac1T\sum_{t=1}^T(x_t-\hat x_t)^2.
+$$
+
+MSE 对大误差平方，因而对短时、大幅度的尖峰更敏感；MAE 对每个时间步等权，因而对长时间、小幅度的整体偏移更敏感，也更不容易被单个离群点主导。ECG 的异常可能是短时尖峰（如室性早搏），也可能是整段波形形态改变；实际应用中应同时看 MAE、MSE、最大逐点误差，或者按时间步可视化误差，而不是只选一个。
+
+（e）类别不平衡下的指标。
+
+验证集异常占 $2081/2665\approx78\%$，正常只占约 22%。准确率会被多数类主导：一个“全部判异常”的模型准确率就有 78%，但完全没有识别能力。应看：
+
+- TPR（召回率）与 FPR；
+- 精确率、F1；
+- PR-AUC（比 ROC-AUC 更适合不平衡数据）；
+- 以及在固定 FPR 下的 TPR（例如“误报不超过 5% 时能抓住多少异常”）。
+
+（f）局限。
+
+重建式异常检测只能发现“重构不好”的异常。以下情况会失效：
+
+- 异常波形恰好落在正常流形的附近，VAE 能很好地重建它；
+- 异常是标签层面的（例如某种心律在形态上与正常几乎一样），重建误差没有差异；
+- 正常样本本身差异很大，导致正常样本的重建误差也很高，阈值难以区分；
+- 数据分布漂移（设备、患者群体变化）让“正常”本身改变。
+
+缓解：使用逐时间步误差、频域/形态特征、多个重构（不同 $z$ 采样）的方差、结合监督模型或规则；在部署后持续监控得分分布和阈值。
+
+:::
+
+### 练习 6：`eval()` 仍会采样：确定性重建与多次采样
+
+本章 ECG 推理部分有一行：
+
+```r
+trained_model <- fitted$model
+trained_model$eval()
+```
+
+- （a） `eval()` 会关闭 `torch_randn_like()` 吗？它实际改变了什么？
+- （b） 写出不经过 `reparameterize`、直接用 `mu` 解码的确定性重建代码（MNIST 与 ECG 各一段）。
+- （c） 在 ECG 验证集上，对同一个模型连续做两次前向，异常得分的相关性大约是多少？最大绝对差有多大？用 `mu` 解码与单次采样解码的 AUC 差别大吗？
+- （d） 生成新样本时应该用 `mu` 还是采样？为什么？
+- （e） 如果想降低采样带来的评分方差，可以对同一个 $x$ 解码 $K$ 次再平均。这样做估计的是什么？它与“在 $\mu$ 处解码一次”有什么区别？
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a）`eval()` 的作用范围。
+
+`eval()` 只切换那些有训练/推理行为差异的模块，例如 `nn_dropout`（推理时关闭）和 `nn_batchnorm`（使用运行统计量而不是 batch 统计量）。`torch_randn_like()` 是一个普通的随机数生成调用，没有“训练模式”和“评估模式”之分；只要 `forward()` 里还写着
+
+```r
+z <- self$reparameterize(mu, logvar)
+```
+
+每次前向都会重新采样 $\epsilon$，输出就会不同。所以 `eval()` 不能让 VAE 的重建变得确定。
+
+（b）确定性解码。
+
+MNIST（20 维 VAE）：
+
+```r
+raw_model$eval()
+with_no_grad({
+  x_flat <- x$view(c(-1, 784))
+  h <- torch_relu(raw_model$fc1(x_flat))
+  mu <- raw_model$fc2_mu(h)
+  recon_mu <- torch_sigmoid(
+    raw_model$fc4(torch_relu(raw_model$fc3(mu)))
+  )
+})
+```
+
+ECG（8 维 VAE）：
+
+```r
+raw_model$eval()
+with_no_grad({
+  h <- raw_model$relu(raw_model$enc1(xt))
+  h <- raw_model$relu(raw_model$enc2(h))
+  mu <- raw_model$fc_mu(h)
+  hd <- raw_model$relu(raw_model$dec1(mu))
+  hd <- raw_model$relu(raw_model$dec2(hd))
+  recon_mu <- raw_model$fc_out(hd)
+})
+```
+
+注意这里绕过了 `forward()`，直接调用子模块；如果模型的 `forward()` 里有其他必要步骤（例如归一化、reshape），要一并复制过来。
+
+（c）采样噪声的实测量级。
+
+在本机的一次 50 轮 ECG 训练中（seed 123）：
+
+- 同一模型连续两次前向，异常得分的相关系数约 0.988–0.995；
+- 最大绝对差约 0.19–0.30（异常得分的量级约 0.2–1.2）；
+- 单次采样解码的 AUC 约 0.9859，`mu` 解码的 AUC 约 0.9863，两者得分相关系数约 0.9976。
+
+也就是说，采样噪声不会改变总体结论（AUC 几乎一样），但会让单个样本的得分和阈值判定发生抖动，影响可复现性和个案例解读。如果要做确定性的异常评分，优先用 `mu`；如果坚持采样，就固定随机种子或做多次平均。
+
+（d）生成时用采样。
+
+生成的目标是从先验 $p(z)$ 中抽一个 $z$，再通过 decoder 得到样本。若总用 $\mu=0$，所有生成结果都相同（通常是训练集的“平均数字”），没有多样性。`generate_digits()` 里
+
+```r
+z <- torch_randn(n, 20, device = device)
+```
+
+正是从 $N(0,I)$ 采样，所以能得到不同的数字。相反，`visualize_2d_direct()` 用 `mu` 是为了给每个输入一个确定性的二维表示，便于散点图对齐标签；`plot_manifold()` 则是在固定的网格点上解码，观察 decoder 的连续映射。三处目的不同，采样策略也不同。
+
+（e）多次平均。
+
+对同一个 $x$，做 $K$ 次独立采样 $z_k=\mu+\sigma\odot\epsilon_k$，得到 $K$ 个重建 $\hat x_k$，再平均：
+
+$$
+\bar x=\frac1K\sum_{k=1}^K \hat x_k.
+$$
+
+它估计的是
+
+$$
+\mathbb E_{q(z\mid x)}\bigl[p(x\mid z)\bigr]
+$$
+
+的蒙特卡洛近似，即后验预测均值。它能降低采样方差，但计算量是 $K$ 倍；而且由于 decoder 是非线性的，
+
+$$
+\frac1K\sum_k \hat x_k
+\ne
+\text{decode}(\mu),
+$$
+
+两者不完全等价。`decode(mu)` 计算一次、完全确定，适合做可复现的评分基线；多次平均更接近真实的期望重建，适合对精度要求高、算力允许的场景。无论选哪种，评估协议要固定，不能有的样本用 `mu`、有的用采样。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：VAE 的模糊、后验坍塌与模型选择
+
+- （a） 为什么 VAE 生成的 MNIST 数字通常比 GAN 模糊？请从重建损失、KL 正则和“对 $z$ 取平均”三个角度解释。
+- （b） 对下面三个任务各选一个模型，并给出一条主要理由：
+  1. 只有正常样本的工业设备异常检测；
+  2. 需要高保真、多样化的图像生成；
+  3. 高维表格数据的二维可视化与聚类。
+  候选：AE、VAE、GAN、扩散模型、PCA、t-SNE。
+- （c） 什么是后验坍塌？写出两种检测方法和两种缓解方法。
+- （d） VAE 异常检测假设“异常在正常流形之外”。举一个 ECG 场景中该假设失效的例子，并说明用什么指标或辅助特征可以补救。
+- （e） 如果只想得到一个低维嵌入做聚类，应该用 VAE 的 `mu`、普通 AE 的瓶颈、PCA，还是 t-SNE？从线性/非线性、稳定性、是否使用标签、是否保留全局距离四个方面讨论。
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a）模糊的三个来源。
+
+1. 似然与损失：VAE 最大化的是对数似然的变分下界。若 decoder 是固定方差的高斯，最优输出是条件均值；若 decoder 是伯努利，最优输出是每个像素为 1 的概率。对不确定的像素，模型会输出“中间灰度”，看起来就是模糊。MSE/BCE 都不会像 GAN 的对抗损失那样惩罚“平均脸”。
+2. KL 正则：KL 强迫 $q(z\mid x)$ 接近 $N(0,1)$，不同样本的后验会重叠。decoder 在重叠区域必须同时照顾多个样本，只能给出折中的重建。
+3. 对 $z$ 的平均：给定 $x$，$z$ 仍然有方差；不同 $z$ 解码出的图像会有细微差异，人眼/评估指标看到的是某种平均效果。GAN 的生成器是确定性的（或只受输入噪声影响），没有这个“后验平均”问题。
+
+这不是“VAE 训练失败”，而是它的目标函数决定的偏差-方差取舍。想要更清晰，可以减小 β、使用更 expressive 的 decoder、使用离散/混合似然、或用 GAN/扩散模型做后处理。
+
+（b）模型选择。
+
+1. 只有正常样本的工业异常检测：VAE 或 AE。理由：只需要正常数据，重建误差可以直接作为异常分数；VAE 还能给出潜在分布的尺度，便于校准。GAN 训练不稳定，扩散模型推理成本高。
+2. 高保真、多样化图像生成：扩散模型（或 GAN）。理由：扩散模型的样本质量和多样性通常优于 VAE；GAN 推理快但训练不稳定。VAE 适合作为潜空间模型或压缩前端。
+3. 高维表格的二维可视化与聚类：PCA（可解释、稳定）或 t-SNE/UMAP（局部结构好）；若需要非线性且可生成，可用 VAE 的 `mu`。理由：PCA 线性、确定性、保留全局方差；t-SNE 适合可视化但不适合作为聚类输入（不保留全局距离、随机性大）；VAE 嵌入平滑但训练成本高、对超参敏感。
+
+没有“唯一正确”的选择，关键是把任务指标（召回率、FID、轮廓系数等）和约束（算力、可解释性、标注量）说清楚。
+
+（c）后验坍塌。
+
+定义：对所有 $x$，$q(z\mid x)\approx p(z)$，潜变量 $z$ 几乎不携带输入信息，decoder 忽略 $z$。
+
+检测：
+
+1. 计算每个维度的平均 KL；如果几乎所有维度都接近 0，且重建仍然不差，说明 KL 被“压平”了。
+2. 固定 $x$，改变 $z$（或对 $z$ 做遍历），看输出是否变化；若几乎不变，说明 decoder 没有用 $z$。
+3. 计算 $z$ 与 $x$ 的互信息下界，或训练一个从 $z$ 预测 $x$ 的辅助模型。
+
+缓解：
+
+1. β annealing：训练初期 β 很小，逐渐增大，让模型先学会重建，再慢慢加正则。
+2. Free bits：给每个维度的 KL 设一个下限 $\lambda$，只惩罚超过 $\lambda$ 的部分，避免所有维度一起被压到 0。
+3. 减弱 decoder（例如减少层数/容量）、加 skip connection、使用更弱的自回归 decoder。
+
+（d）假设失效的例子。
+
+例如某种心律失常的波形在形态和幅度上都与正常心跳很接近，只是发生的时间点或节律不同。VAE 只看单条 140 步的波形，可能把它重构得很好，MAE 不高；但临床上它仍然是异常。又比如异常只体现在相邻心跳之间的间期，而模型每次只输入一条心跳，根本看不到这个信息。
+
+补救：
+
+- 使用逐时间步误差和最大误差，而不只是全序列平均；
+- 加入节律/间期特征、频域特征、相邻心跳的上下文；
+- 用少量标注训练一个监督头，或做半监督异常检测；
+- 评估时看 PR-AUC、固定 FPR 下的 TPR，并按异常类型分层报告。
+
+（e）低维嵌入的选择。
+
+| 方法 | 线性/非线性 | 稳定性 | 用标签 | 全局距离 |
+|---|---|---|---|---|
+| PCA | 线性 | 高（确定性） | 否 | 保留方差/全局结构 |
+| 普通 AE 瓶颈 | 非线性 | 中（依赖初始化/训练） | 否 | 不保证 |
+| VAE 的 `mu` | 非线性 | 中 | 否 | 近似保留，受 KL 影响 |
+| t-SNE | 非线性 | 低（随机、对 perplexity 敏感） | 否 | 不保留，只保留局部 |
+
+如果下游是聚类，通常优先 PCA（稳定、可解释、快），或 AE/VAE 的瓶颈（数据复杂时）。t-SNE 适合“看”而不适合“算”：它的坐标没有全局意义，不同运行的坐标不可比，不能把 t-SNE 输出直接喂给 K-means 并解释簇间距离。若使用 VAE 的 `mu`，要注意 KL 会把不同类的后验拉向先验，可能压缩类间距离；可以调整 β 或在 `mu` 上再做标准化。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：三个有局限性的点
+
+下面三段来自本章正文或配套脚本。请判断写法的局限性。
+
+- （a） `code/12_vae_ECG5000.R` 第 251 行调用 `trained_model$eval()`，随后直接用 `trained_model(x_val_tensor)$recon` 计算异常得分。
+- （b） 正文第 125 行写 `list(x = self$data[i,..], y = self$data[i,..])`，`code/12_vae_mnist.R` 第 67 行却写 `self$data[i, , , , drop = FALSE]`。
+- （c） 正文说 MNIST 训练 20 轮后 loss 降到 13,000 左右，ECG 的 loss 只有 200 左右，所以“ECG 模型比 MNIST 模型好得多”。
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a）`eval()` 不会关闭重参数化采样。
+
+`eval()` 只影响 dropout、batchnorm 等模块；`forward()` 里的
+
+```r
+z <- self$reparameterize(mu, log_var)
+```
+
+仍然会调用 `torch_randn_like()`。因此同一模型对同一批数据连续两次前向，`recon` 不同，异常得分也不同。本机实测两次得分的相关系数约 0.988–0.995，最大绝对差约 0.19–0.30；AUC 基本不变（约 0.986），但单样本判定会抖动。
+
+修正：做确定性异常评分时，绕过采样，直接用 `mu` 解码：
+
+```r
+with_no_grad({
+  h <- trained_model$relu(trained_model$enc1(x_val_tensor))
+  h <- trained_model$relu(trained_model$enc2(h))
+  mu <- trained_model$fc_mu(h)
+  hd <- trained_model$relu(trained_model$dec1(mu))
+  hd <- trained_model$relu(trained_model$dec2(hd))
+  recon_mu <- trained_model$fc_out(hd)
+})
+```
+
+或者在同一个 $x$ 上采样 $K$ 次取平均，并固定随机种子。生成新样本时则相反，应该保留采样（见练习 6）。
+
+（b）两种 dataset 写法不是 bug，但形状不同。
+
+正文：
+
+```r
+list(x = self$data[i,..], y = self$data[i,..])
+```
+
+在 torch 0.17.0 中，`..` 表示“其余所有维度”，`self$data` 形状为 `[N, 1, 28, 28]` 时，`self$data[i,..]` 返回 `[1, 28, 28]`；dataloader 拼成 `[B, 1, 28, 28]`。
+
+脚本：
+
+```r
+img <- self$data[i, , , , drop = FALSE]
+```
+
+保留所有维度，返回 `[1, 1, 28, 28]`；dataloader 拼成 `[B, 1, 1, 28, 28]`。
+
+两者都能被 `x$view(c(-1, 784))` 展平成 `[B, 784]`，所以在本章的纯 MLP VAE 中都能正常运行，不是错误。差别是多出来的单例维度：如果以后把编码器换成 `nn_conv2d`，它要求 4 维 `[B, C, H, W]`，`[B, 1, 1, 28, 28]` 会多一维而报错；此时应统一成 `[B, 1, 28, 28]`。结论：这是“写法差异 + 潜在形状陷阱”，不是当前代码的 bug。
+
+（c）不同归一化的 loss 不可直接比较。
+
+MNIST 的 `vae_loss` 返回
+
+$$
+\text{BCE}_{\text{sum}}+\text{KL}_{\text{sum}},
+$$
+
+是一个 batch（128 张、每张 784 像素）的总和；ECG 的 `loss_vae` 返回
+
+$$
+\frac{\text{MSE}_{\text{sum}}+\text{KL}_{\text{sum}}}{B},
+$$
+
+是每样本平均。两者还使用了不同的似然（BCE vs MSE）和不同的输入维度（784 vs 140）。把 13,000 和 200 放在一起比较，就像拿“一个班的总分”和“一个学生的平均分”比较，结论没有意义。
+
+要做有意义的比较，至少统一到：
+
+- 每像素 BCE（MNIST）：$9865.27/(128\times784)=0.0983$ nat/像素；
+- 每时间步 MSE（ECG）：需要从 `recon_loss` 除以 $B\times140$，并注意它是标准化尺度上的 MSE；
+- 或者直接用下游指标：MNIST 的重建图像质量/分类一致性，ECG 的 AUC/TPR/FPR。
+
+另外，`reduction="sum"` 时最后一个不满 batch 的样本数较少，loss 自然更小；如果按 batch 平均，最后一个 batch 会被过度加权。严谨的实现应按样本数加权平均，或使用 `drop_last=TRUE`。
+
+:::
+
+---
+
+## 进一步练习（可选）
+
+如果希望把本章内容串起来，可以做一个“潜空间体检”小项目：
+
+1. 在 MNIST 上训练 20 维 VAE，记录训练/验证的 BCE 与 KL 分解曲线，观察 KL 是否在训练早期被压到 0（后验坍塌的征兆）。
+2. 把 `latent_dim` 改为 2，分别用 `mu` 和采样 $z$ 画散点图，比较两种嵌入的聚类轮廓系数。
+3. 在 ECG5000 上比较三种异常得分：单次采样 MAE、`mu` 解码 MAE、$K=10$ 次采样平均 MAE；报告 AUC、固定 FPR 下的 TPR，以及同一模型两次运行的得分相关性。
+4. 把 `loss_vae` 的重建项从 `sum` 改成 `mean`，但先不改 KL 的归一化，观察是否出现后验坍塌；再改成配套归一化，比较重建质量。
+
+报告时至少给出三次随机种子的均值和标准差，不要只报最好的一次。

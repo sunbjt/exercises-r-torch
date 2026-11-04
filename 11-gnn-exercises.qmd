@@ -1,0 +1,978 @@
+# 11 图神经网络 {.unnumbered}
+
+本章从图的邻接矩阵出发，依次讨论 GCN、GAT、LightGCN 和分子图回归。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：GCN 的对称归一化、参数量与过平滑；GAT 的加性注意力、掩码与多头；LightGCN 的传播、层平均与 BPR。
+- 编程实践（练习 4–6）：手写 GCN 归一化与两层前向；手写 GAT 得分矩阵与掩码 Softmax；实现分子图的掩码双池化读出。
+- 开放思考（练习 7）：GCN、GAT、LightGCN 的适用边界，过平滑、冷启动与异配性。
+- 纠错与陷阱（练习 8）：Zachary 的 0/1 注释、Cora 的 50/100 轮、LightGCN 的负采样与自环、GAT 的掩码方向、MSE 与 RMSE 的区别。
+
+建议用时约 3 小时。练习 1、2、4、5 可以先做；练习 3、6 适合对照本章代码阅读；练习 7、8 建议在复现实验前完成。答案中的 Cora 统计量在 R 4.6.1、torch 0.17.0 下核对过：2708 个节点、1433 维特征、7 个类别；原始 `cora.cites` 有 5429 条有向引用记录，按无向图合并后是 5278 条唯一边。
+
+## 一、概念与推导
+
+### 练习 1：GCN 的归一化、参数量与过平滑
+
+考虑一个无向图，4 个节点，边为 $(1,2)$、$(1,3)$、$(2,4)$。
+
+- （a） 写出邻接矩阵 $A$、度矩阵 $D$、加自环后的 $\tilde A=A+I$ 和 $\tilde D$。
+- （b） 计算对称归一化矩阵
+  $$
+  \hat A=\tilde D^{-1/2}\tilde A\tilde D^{-1/2}.
+  $$
+  验证 $\hat A$ 的每一行之和是否等于 1；再与 $\tilde D^{-1}\tilde A$ 比较。解释为什么对称归一化会“稀释”高度节点的信息，而低度节点反而获得更大的权重。
+- （c） 本章 Cora 的 GCN 是 $1433\to16\to7$，两层都使用 `nn_linear(..., bias = FALSE)`。计算参数量；如果把两层偏置都加回来，参数量是多少？
+- （d） 去掉两层之间的 ReLU，会发生什么？用矩阵结合律说明“深度”为什么没有带来新的函数类。
+- （e） Zachary 的 GCN 是 $34\to4\to2$，两层都使用带偏置的 `nn_linear`。计算参数量；为什么只用节点 1 和节点 34 的标签也能训练？
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a）矩阵。
+
+$$
+A=\begin{pmatrix}
+0&1&1&0\\
+1&0&0&1\\
+1&0&0&0\\
+0&1&0&0
+\end{pmatrix},
+\qquad
+D=\operatorname{diag}(2,2,1,1).
+$$
+
+加自环：
+
+$$
+\tilde A=A+I=
+\begin{pmatrix}
+1&1&1&0\\
+1&1&0&1\\
+1&0&1&0\\
+0&1&0&1
+\end{pmatrix},
+\qquad
+\tilde D=\operatorname{diag}(3,3,2,2).
+$$
+
+（b）对称归一化。
+
+$$
+\hat A=
+\begin{pmatrix}
+\frac13&\frac13&\frac1{\sqrt6}&0\\
+\frac13&\frac13&0&\frac1{\sqrt6}\\
+\frac1{\sqrt6}&0&\frac12&0\\
+0&\frac1{\sqrt6}&0&\frac12
+\end{pmatrix}.
+$$
+
+其中 $1/\sqrt6\approx0.408248$。各行之和为
+
+$$
+\begin{aligned}
+\text{row }1,2 &: \frac13+\frac13+\frac1{\sqrt6}
+=1.074915,\\
+\text{row }3,4 &: \frac1{\sqrt6}+\frac12
+=0.908248.
+\end{aligned}
+$$
+
+所以 $\hat A$ 不是行随机矩阵，行和不一定为 1。它是对称矩阵，谱半径不超过 1；对称归一化同时考虑了发送方和接收方的度数：
+
+$$
+\hat A_{ij}=\frac{1}{\sqrt{\tilde d_i}\sqrt{\tilde d_j}}.
+$$
+
+节点 1 的两个邻居是节点 2（$\tilde d=3$）和节点 3（$\tilde d=2$）。对称归一化给节点 2 的权重是 $1/3\approx0.333$，给节点 3 的权重是 $1/\sqrt6\approx0.408$：度数更低的节点 3 反而更重要。若改用 $\tilde D^{-1}\tilde A$，节点 1 对两个邻居都分配 $1/3$，只看接收方，不区分邻居自身的“注意力是否被分散”。
+
+（c）Cora GCN 参数量。
+
+第一层 $1433\times16=22{,}928$，第二层 $16\times7=112$，合计
+
+$$
+22{,}928+112=\boxed{23{,}040}.
+$$
+
+加回偏置后多出 $16+7=23$ 个参数，合计 23,063。
+
+（d）去掉 ReLU。
+
+设第一层权重为 $W_1$，第二层为 $W_2$，则
+
+$$
+H^{(2)}
+=\hat A\bigl(\hat A XW_1\bigr)W_2
+=\hat A^2X(W_1W_2).
+$$
+
+令 $W'=W_1W_2$，它仍然是一个 $1433\times7$ 的线性映射。也就是说，两层线性 GCN 在函数类上等价于“一层线性 GCN + 两次邻接传播”；邻接矩阵仍然扩大了感受野，但没有非线性带来的新折点，深度本身不会增加模型能表达的函数类。这也是本章反复强调“特征变换之后必须有非线性”的原因。
+
+（e）Zachary GCN 参数量。
+
+第一层 $34\times4+4=140$，第二层 $4\times2+2=10$，合计
+
+$$
+140+10=\boxed{150}.
+$$
+
+训练时只取 `target_idx <- c(1, 34)` 计算交叉熵，但前向传播中每个节点的表示都经过 $\hat A$ 与邻居混合。节点 1 和节点 34 的梯度会沿着图结构传到它们的邻居、邻居的邻居，因此其余 32 个节点虽然没有直接标签，仍然会收到梯度并更新表示。这就是半监督节点分类的基本机制。
+
+补充：过平滑。 如果不断堆叠 GCN 层，$\hat A^L$ 会把每个节点的感受野扩大到全图。对于带自环的连通图，反复平均会让不同节点的表示越来越接近，最后难以区分，这就是过平滑（over-smoothing）。Cora 上两层通常已经足够；层数增加不一定提高准确率，反而可能下降。常见缓解手段包括残差连接、JKNet、DropEdge、层平均（LightGCN 就采用了层平均）等。
+
+:::
+
+### 练习 2：GAT 的加性注意力与掩码
+
+GAT 的理论得分是
+
+$$
+e_{ij}=\operatorname{LeakyReLU}\left(\vec a^\top[z_i\Vert z_j]\right).
+$$
+
+- （a） 把 $\vec a$ 从中间劈成 $\vec a_{src}$ 和 $\vec a_{dst}$，证明
+  $$
+  \vec a^\top[z_i\Vert z_j]=\vec a_{src}^\top z_i+\vec a_{dst}^\top z_j.
+  $$
+  写出用矩阵一次性计算所有 $e_{ij}$ 的表达式，并说明它比双重 `for` 循环省在哪里。
+- （b） 取 3 个节点，$z_1=(1,0)$、$z_2=(0,1)$、$z_3=(1,1)$，$\vec a_{src}=(1,0)$、$\vec a_{dst}=(0,1)$。图带自环，边为 $(1,1),(1,2),(2,1),(2,2),(2,3),(3,2),(3,3)$。计算得分矩阵 $S$、掩码后的矩阵、Softmax 后的注意力 $P$，以及 $H=PZ$。验证 $P$ 的每一行之和。
+- （c） 本章 Cora 的 GAT 有 8 个头，每个头 $1433\to8$，输出层是单头 $64\to7$。所有线性层都无偏置，但每个 GAT 层有两个长度为 8 的注意力向量。计算总参数量。
+- （d） 代码用 `-1e9` 填充不存在的边。若某个节点没有任何邻居、也没有自环，整行都是 `-1e9`，Softmax 会得到什么？改用 `-Inf` 又会怎样？本章 Cora 为什么没有触发这个问题？
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a）拆分与向量化。
+
+把长为 $2F_{out}$ 的 $\vec a$ 分成前后两半：
+
+$$
+\vec a=\begin{pmatrix}\vec a_{src}\\ \vec a_{dst}\end{pmatrix},
+\qquad
+\vec a^\top[z_i\Vert z_j]
+=\vec a_{src}^\top z_i+\vec a_{dst}^\top z_j.
+$$
+
+令 $Z\in\mathbb R^{N\times F_{out}}$，$f_{src}=Z\vec a_{src}\in\mathbb R^{N\times1}$，$f_{dst}=Z\vec a_{dst}\in\mathbb R^{N\times1}$，则
+
+$$
+S=f_{src}\mathbf 1^\top+\mathbf 1 f_{dst}^\top,
+\qquad
+S_{ij}=f_{src,i}+f_{dst,j}.
+$$
+
+这里 $\mathbf 1$ 是全 1 列向量。一次矩阵乘法加一次广播就得到 $N\times N$ 的得分矩阵；双重循环则要做 $N^2$ 次拼接和内积，在 Cora 的 $N=2708$ 上就是七百多万次小操作，主要成本在 R/Python 层的循环和内存分配，而不是浮点运算本身。
+
+（b）玩具图。
+
+按 $S_{ij}=z_i^\top\vec a_{src}+z_j^\top\vec a_{dst}$：
+
+$$
+S=
+\begin{pmatrix}
+1&2&2\\
+0&1&1\\
+1&2&2
+\end{pmatrix}.
+$$
+
+邻接矩阵（含自环）为
+
+$$
+A=
+\begin{pmatrix}
+1&1&0\\
+1&1&1\\
+0&1&1
+\end{pmatrix}.
+$$
+
+掩码后：
+
+$$
+S_{\text{masked}}=
+\begin{pmatrix}
+1&2&-10^9\\
+0&1&1\\
+-10^9&2&2
+\end{pmatrix}.
+$$
+
+逐行 Softmax：
+
+$$
+P=
+\begin{pmatrix}
+0.2689&0.7311&0\\
+0.1554&0.4223&0.4223\\
+0&0.5&0.5
+\end{pmatrix},
+\qquad
+P\mathbf 1=\mathbf 1.
+$$
+
+最后
+
+$$
+H=PZ=
+\begin{pmatrix}
+0.2689&0.7311\\
+0.5777&0.8446\\
+0.5&1.0
+\end{pmatrix}.
+$$
+
+（c）参数量。
+
+每个头：
+
+- 特征变换 $W$：$1433\times8=11{,}464$；
+- $\vec a_{src}$：8；
+- $\vec a_{dst}$：8。
+
+合计 $11{,}480$ 个参数。8 个头共 $8\times11{,}480=91{,}840$。
+
+输出层：
+
+- $W$：$64\times7=448$；
+- $\vec a_{src}$：7；
+- $\vec a_{dst}$：7。
+
+合计 $462$。总参数量：
+
+$$
+91{,}840+462=\boxed{92{,}302}.
+$$
+
+（d）整行被掩码。
+
+如果整行都是 `-1e9`，则
+
+$$
+\operatorname{softmax}([-10^9,-10^9,-10^9])
+=\left(\frac13,\frac13,\frac13\right),
+$$
+
+注意力会均匀分给所有节点，包括本来不存在的边。`-1e9` 的指数在 float32 下会下溢为 0，所以不会得到 NaN，但“全掩码”仍然是一个均匀分布。若改成 `-Inf`，整行都是 $-\infty$，Softmax 的分母为 0，结果是 NaN。
+
+本章 Cora 的 `adj_binary <- adj + diag(num_nodes)` 给每个节点都加了自环，因此每一行至少有一个合法位置，不会出现全掩码。对一般图，正确做法是：要么保证每个节点有自环，要么在 Softmax 后把“没有任何合法邻居”的行的输出显式置零，而不是依赖 `-1e9` 的数值巧合。
+
+命名与方向。 代码里 `scores <- attn_src + attn_dst$t()` 的第 $i$ 行、第 $j$ 列是
+
+$$
+S_{ij}=z_i^\top\vec a_{src}+z_j^\top\vec a_{dst},
+$$
+
+而 `h_prime <- attention %*% wh` 是第 $i$ 行聚合第 $j$ 列。因此第 $i$ 行是接收者，第 $j$ 列是发送者。本章正文后面也写了“行表示目标节点（接收），列表示源节点（发送）”，但前面把 $\vec a_{src}$ 解释成“节点 $i$ 作为发出者”，两处方向正好相反。模型仍然能训练，但读代码时要把名称或解释对调，不能同时按两种约定理解。
+
+:::
+
+### 练习 3：LightGCN 的传播、层平均与 BPR
+
+LightGCN 在用户-物品二部图上做线性传播。设二部图邻接矩阵为 $A$（不含自环），对称归一化为
+
+$$
+\hat A=D^{-1/2}AD^{-1/2},
+\qquad
+E^{(k+1)}=\hat A E^{(k)}.
+$$
+
+- （a） 写出第 $k$ 层用户向量的展开式，并解释 LightGCN 为什么去掉特征变换 $W$ 和非线性 $\sigma$。层平均
+  $$
+  e_u=\frac1{K+1}\sum_{k=0}^K e_u^{(k)}
+  $$
+  解决了什么问题？
+- （b） 考虑 2 个用户、3 个物品，边为 $(u_1,i_1)$、$(u_1,i_2)$、$(u_2,i_2)$、$(u_2,i_3)$。初始标量表示为
+  $$
+  e^{(0)}=(e_{u_1},e_{u_2},e_{i_1},e_{i_2},e_{i_3})=(1,2,0.1,0.2,0.3).
+  $$
+  计算 $\hat A$、两层传播 $e^{(1)},e^{(2)}$，以及 $K=2$ 的层平均。对 $u_1$ 的正样本 $i_1$、负样本 $i_3$，分别计算第 0 层和层平均后的 BPR 损失。
+- （c） 写出 BPR 损失
+  $$
+  \mathcal L_{\text{BPR}}=-\log\sigma(\hat y_{ui}-\hat y_{uj})
+  $$
+  对得分差 $s=\hat y_{ui}-\hat y_{uj}$ 的导数。为什么 L2 正则通常只加在第 0 层 embedding $E^{(0)}$ 上，而不是每一层传播后的表示上？
+- （d） 一个新用户刚产生了几条交互，如何用 Folding-in 构造他的向量？如果新来的是一个物品，这套方法还能直接用吗？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a）传播与设计动机。
+
+按节点顺序 $(u_1,u_2,i_1,i_2,i_3)$，二部图邻接矩阵为
+
+$$
+A=
+\begin{pmatrix}
+0&0&1&1&0\\
+0&0&0&1&1\\
+1&0&0&0&0\\
+1&1&0&0&0\\
+0&1&0&0&0
+\end{pmatrix}.
+$$
+
+度数为 $(2,2,1,2,1)$，因此
+
+$$
+\hat A=
+\begin{pmatrix}
+0&0&0.7071&0.5&0\\
+0&0&0&0.5&0.7071\\
+0.7071&0&0&0&0\\
+0.5&0.5&0&0&0\\
+0&0.7071&0&0&0
+\end{pmatrix}.
+$$
+
+第 $k+1$ 层用户向量是
+
+$$
+e_u^{(k+1)}
+=\sum_{i\in\mathcal N_u}
+\frac{1}{\sqrt{|D_u|}\sqrt{|D_i|}}e_i^{(k)},
+$$
+
+也就是“用户交互过的物品”的加权平均；物品侧完全对称。
+
+去掉 $W$ 和 $\sigma$ 的原因：协同过滤的输入通常只是用户/物品 ID 的 one-hot，初始 embedding 本身就是要学习的自由参数。再加一个共享线性变换 $W$，在每一层对所有节点做同样的旋转，既没有内容特征可提取，又增加了参数和过拟合风险；非线性在 ID-only 的协同过滤中也贡献很小。LightGCN 保留的是最核心的邻居聚合。
+
+层平均的作用：第 0 层保留 ID 自身的原始特征，第 1 层引入直接交互，第 2 层引入“和我买过同样东西的人还买过什么”。如果只取最后一层，随着层数增加，初始 ID 信息会被反复平滑掉，出现过平滑；把各层取平均，相当于让模型自己组合不同半径的邻域信息。
+
+（b）玩具传播。
+
+第 1 层：
+
+$$
+e^{(1)}
+=(0.170711,\ 0.312132,\ 0.707107,\ 1.5,\ 1.414214).
+$$
+
+第 2 层：
+
+$$
+e^{(2)}
+=(1.25,\ 1.75,\ 0.120711,\ 0.241421,\ 0.220711).
+$$
+
+$K=2$ 的层平均：
+
+$$
+\bar e=\frac{e^{(0)}+e^{(1)}+e^{(2)}}3
+=(0.806904,\ 1.354044,\ 0.309272,\ 0.64714,\ 0.644975).
+$$
+
+对 $u_1$，正样本 $i_1$、负样本 $i_3$：
+
+- 第 0 层：$s_0=1\times(0.1-0.3)=-0.2$，
+  $$
+  \mathcal L_0=-\log\sigma(-0.2)=0.798139.
+  $$
+- 层平均：$s=0.806904\times(0.309272-0.644975)=-0.270879$，
+  $$
+  \mathcal L=-\log\sigma(-0.270879)=0.837731.
+  $$
+
+这个玩具例子说明：传播并不保证每一对 $(u,i,j)$ 的 BPR 损失都下降；它只是把邻域信息混合进来，最终还要靠训练调整初始 embedding。不要用一个手工构造的传播结果判断模型好坏。
+
+（c）BPR 梯度与正则。
+
+令 $s=\hat y_{ui}-\hat y_{uj}$，则
+
+$$
+\frac{\partial\mathcal L_{\text{BPR}}}{\partial s}
+=\frac{\partial}{\partial s}\left[-\log\sigma(s)\right]
+=-(1-\sigma(s))
+=\sigma(s)-1.
+$$
+
+当正样本得分远高于负样本时，$\sigma(s)\to1$，梯度趋于 0；当负样本反超时，$\sigma(s)$ 很小，梯度接近 $-1$，惩罚很大。若 $\hat y_{ui}=e_u^\top e_i$，则
+
+$$
+\frac{\partial\mathcal L}{\partial e_u}
+=(\sigma(s)-1)(e_i-e_j),
+$$
+
+对 $e_i$、$e_j$ 也有对称的表达式。负采样抽到正样本时，$e_i=e_j$，这个梯度会变成 0，等于白算了一条样本。
+
+L2 通常只作用在 $E^{(0)}$：传播后的 $E^{(k)}$ 是 $E^{(0)}$ 的线性组合，直接对每一层加正则会造成重复计权，而且会把“邻居聚合得到的表示”也强行压小。约束初始 embedding 的范数，等价于约束所有层的范数上界，更干净。
+
+（d）Folding-in。
+
+新用户 $u$ 有交互集合 $\mathcal N_u$，可以忽略多层归一化，直接用物品向量的平均作为他的初始/实时向量：
+
+$$
+e_u^{\text{new}}
+\approx \frac{1}{|\mathcal N_u|}\sum_{i\in\mathcal N_u}e_i.
+$$
+
+这就是本章说的“用户即其行为的总和”。它不需要重新训练用户 embedding，适合新用户实时召回。
+
+新物品不能直接照搬：新物品没有任何用户交互，$\mathcal N_i=\varnothing$，既没有邻居可聚合，也没有训练好的物品向量。此时需要内容特征（标题、类目、图像、文本 embedding）、双塔的物品塔、GraphSAGE 式的属性聚合，或者等积累到足够交互后重新训练。LightGCN 本身是转导式（transductive）的；Folding-in 只对“物品侧已经训练好、用户侧新来”的场景特别方便。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：手写 GCN 归一化与两层前向
+
+仍使用练习 1 的 4 节点图。令 $X=I_4$，第一层权重只取前两列：
+
+```r
+W1 <- matrix(c(1, 0,
+               0, 1,
+               0, 0,
+               0, 0), nrow = 4, byrow = TRUE)
+```
+
+第二层 $W_2=I_2$。请完成：
+
+- （a） 写一个 `gcn_norm(A)`，输入 0/1 邻接矩阵，输出 $\hat A=\tilde D^{-1/2}\tilde A\tilde D^{-1/2}$。
+- （b） 写一个两层前向 `gcn_forward(X, A, W1, W2)`，第一层后接 ReLU，第二层不加激活。
+- （c） 打印 $\hat A$、$H^{(1)}$、$H^{(2)}$，并验证 $H^{(2)}$ 的每一行之和。
+- （d） 如果把两层都改成带偏置的 `nn_linear`，这个玩具网络的参数量是多少？GCN 为什么常把偏置关掉？
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）归一化函数。
+
+```r
+library(torch)
+
+gcn_norm <- function(A) {
+  n <- A$size(1)
+  At <- A + torch_eye(n, dtype = A$dtype)
+  d <- torch_sum(At, dim = 2)
+  D_inv_sqrt <- torch_diag(torch_pow(d, -0.5))
+  torch_mm(torch_mm(D_inv_sqrt, At), D_inv_sqrt)
+}
+```
+
+注意 `torch_eye(n, dtype = A$dtype)` 的 dtype 要与 `A` 一致；如果 `A` 是 float32，而 `torch_eye()` 默认也是 float32，通常没问题，但显式写出 dtype 更稳。
+
+（b）两层前向。
+
+```r
+gcn_forward <- function(X, A, W1, W2) {
+  A_hat <- gcn_norm(A)
+  H1 <- torch_relu(torch_mm(A_hat, torch_mm(X, W1)))
+  H2 <- torch_mm(A_hat, torch_mm(H1, W2))
+  list(A_hat = A_hat, H1 = H1, H2 = H2)
+}
+```
+
+（c）运行结果。
+
+```r
+A <- torch_tensor(matrix(c(
+  0, 1, 1, 0,
+  1, 0, 0, 1,
+  1, 0, 0, 0,
+  0, 1, 0, 0
+), nrow = 4, byrow = TRUE), dtype = torch_float())
+
+X  <- torch_eye(4)
+W1 <- torch_tensor(matrix(c(
+  1, 0,
+  0, 1,
+  0, 0,
+  0, 0
+), nrow = 4, byrow = TRUE), dtype = torch_float())
+W2 <- torch_eye(2)
+
+out <- gcn_forward(X, A, W1, W2)
+out$A_hat
+out$H1
+out$H2
+out$H2$sum(dim = 2)
+```
+
+输出（保留四位小数）：
+
+```text
+A_hat
+ 0.3333  0.3333  0.4082  0.0000
+ 0.3333  0.3333  0.0000  0.4082
+ 0.4082  0.0000  0.5000  0.0000
+ 0.0000  0.4082  0.0000  0.5000
+
+H1
+ 0.3333  0.3333
+ 0.3333  0.3333
+ 0.4082  0.0000
+ 0.0000  0.4082
+
+H2
+ 0.3889  0.2222
+ 0.2222  0.3889
+ 0.3402  0.1361
+ 0.1361  0.3402
+
+row sums of H2
+ 0.6111
+ 0.6111
+ 0.4763
+ 0.4763
+```
+
+$H^{(2)}$ 的行和不等于 1，这是正常的：$\hat A$ 不是行随机矩阵，GCN 也没有要求输出是概率分布。行和只是当前权重下各节点聚合结果的尺度，不是模型约束。
+
+（d）偏置与参数量。
+
+玩具网络：
+
+- 第一层 $W_1$：$4\times2=8$；
+- 第一层偏置：2；
+- 第二层 $W_2$：$2\times2=4$；
+- 第二层偏置：2。
+
+带偏置共 $8+2+4+2=16$ 个参数；不带偏置是 12 个。Cora 的 GCN 加回偏置只多 23 个参数（16+7），相对 23,040 很小。
+
+GCN 常写 `bias = FALSE`，主要是因为原始 GCN 公式和常见实现把偏置省掉，减少一点参数；偏置并不是数学上完全冗余：$\hat A(XW+\mathbf b)$ 中的 $\mathbf b$ 会被邻域平均，仍可能提供逐节点的平移。它是否显著影响结果要看数据和正则化，不能把“省略偏置”当成硬性正确性要求。
+
+:::
+
+### 练习 5：手写 GAT 得分矩阵与掩码 Softmax
+
+使用练习 2 的 3 节点玩具图：
+
+```r
+Z <- matrix(c(1, 0,
+              0, 1,
+              1, 1), nrow = 3, byrow = TRUE)
+a_src <- c(1, 0)
+a_dst <- c(0, 1)
+A <- matrix(c(1, 1, 0,
+              1, 1, 1,
+              0, 1, 1), nrow = 3, byrow = TRUE)
+```
+
+- （a） 用 R torch 实现 `gat_attention(Z, a_src, a_dst, A)`，返回得分矩阵、掩码后的矩阵、注意力矩阵和输出 $H$。
+- （b） 打印 $S$、$P$、$H$，并验证 `P$sum(dim = 2)`。
+- （c） 如果把节点 1 的所有边（包括自环）都删掉，令 `A[1, ] <- 0` 且 `A[, 1] <- 0`，Softmax 会得到什么？如何修正？
+- （d） 把 `-1e9` 换成 `-Inf`，在 R torch 中会发生什么？为什么本章的 Cora 代码没有暴露这个问题？
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a）实现。
+
+```r
+library(torch)
+
+gat_attention <- function(Z, a_src, a_dst, A) {
+  Z <- torch_tensor(Z, dtype = torch_float())
+  a_src <- torch_tensor(a_src, dtype = torch_float())$unsqueeze(2)
+  a_dst <- torch_tensor(a_dst, dtype = torch_float())$unsqueeze(2)
+  A <- torch_tensor(A, dtype = torch_float())
+
+  scores <- torch_matmul(Z, a_src) +
+    torch_matmul(Z, a_dst)$t()
+  scores <- nnf_leaky_relu(scores, negative_slope = 0.2)
+
+  masked <- torch_where(
+    A > 0,
+    scores,
+    -1e9 * torch_ones_like(scores)
+  )
+  attention <- nnf_softmax(masked, dim = 2)
+  output <- torch_matmul(attention, Z)
+
+  list(scores = scores, masked = masked,
+       attention = attention, output = output)
+}
+```
+
+（b）输出。
+
+```r
+res <- gat_attention(Z, a_src, a_dst, A)
+res$scores
+res$attention
+res$output
+res$attention$sum(dim = 2)
+```
+
+```text
+scores
+ 1  2  2
+ 0  1  1
+ 1  2  2
+
+attention
+ 0.2689  0.7311  0.0000
+ 0.1554  0.4223  0.4223
+ 0.0000  0.5000  0.5000
+
+output
+ 0.2689  0.7311
+ 0.5777  0.8446
+ 0.5000  1.0000
+
+row sums
+ 1
+ 1
+ 1
+```
+
+（c）孤立节点。
+
+若节点 1 没有任何边、也没有自环，则 $A$ 的第 1 行全为 0。`torch_where` 把第 1 行所有得分都置为 `-1e9`，Softmax 得到
+
+$$
+\left(\frac13,\frac13,\frac13\right),
+$$
+
+注意力均匀分给所有节点，包括不存在的边。这不是“没有邻居”，而是把全图都当成了邻居。
+
+修正方式有两类：
+
+1. 给每个节点加自环，保证每行至少有一个合法位置；
+2. 在 Softmax 之后计算 `valid <- A$sum(dim = 2) > 0`，对 `valid == FALSE` 的行把输出显式置零（或用一个可学习的空邻居向量）。
+
+本章 Cora 使用了第 1 种：`adj_binary <- adj + diag(num_nodes)`，所以不会出现全零行。
+
+（d）`-Inf` 的行为。
+
+若整行都是 `-Inf`，Softmax 的分子是 $e^{-\infty}=0$，分母也是 0，结果是 `NaN`。R torch 中会得到 `NaN`，后续反向传播会把 NaN 传播到参数。`-1e9` 避免了 NaN，但它只是“数值上足够负”，并不能表达“这一行没有任何合法邻居”的语义。生产代码应显式处理空邻居行，而不是依赖一个有限的极小值。
+
+:::
+
+### 练习 6：分子图的掩码双池化读出
+
+本章的 `MaskedDualReadout` 把每个分子的原子表示压成一个图向量：
+
+$$
+h_{\text{graph}}=[\operatorname{MeanPool}(H)\Vert\operatorname{MaxPool}(H)].
+$$
+
+设一个 batch 有 $B=3$ 个分子，最大原子数 $N=5$，隐藏维度 $H=2$。真实原子数分别为 5、3、1。节点表示（行是原子，列是特征）为
+
+```text
+分子 1: [1,2], [3,4], [5,6], [7,8], [9,10]
+分子 2: [1,1], [2,2], [3,3], [100,100], [100,100]
+分子 3: [4,5], [100,100], [100,100], [100,100], [100,100]
+```
+
+其中 `[100,100]` 是 padding，mask 分别为 `1,1,1,1,1`、`1,1,1,0,0`、`1,0,0,0,0`。
+
+- （a） 用 `mask$unsqueeze(3)$expand_as(h)` 实现 `MaskedDualReadout`，不要写 batch 循环。
+- （b） 计算三个分子的 mean、max 和拼接后的读出向量。
+- （c） 计算本章 `GraphPredictor` 的参数量（`in_dim=18`、`hidden_dim=64`、`num_global_features=2`）。
+- （d） 为什么分子 GCN 用行归一化 $\tilde D^{-1}\tilde A$，而不是 Cora 的对称归一化？`torch_clamp(degree, min = 1e-5)` 在这里防的是什么？
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a）实现。
+
+```r
+readout <- function(h, mask) {
+  mask_expanded <- mask$unsqueeze(3)$expand_as(h)
+  h_masked <- h * mask_expanded
+
+  sum_h <- h_masked$sum(dim = 2)
+  num_atoms <- mask$sum(dim = 2, keepdim = TRUE)$clamp(min = 1)
+  mean_h <- sum_h / num_atoms
+
+  max_h <- h_masked$max(dim = 2)[[1]]
+  torch_cat(list(mean_h, max_h), dim = 2)
+}
+```
+
+（b）输出。
+
+```r
+h <- torch_zeros(3, 5, 2)
+h[1, , ] <- torch_tensor(matrix(c(
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+), nrow = 5, byrow = TRUE), dtype = torch_float())
+h[2, , ] <- torch_tensor(matrix(c(
+  1, 1, 2, 2, 3, 3, 100, 100, 100, 100
+), nrow = 5, byrow = TRUE), dtype = torch_float())
+h[3, , ] <- torch_tensor(matrix(c(
+  4, 5, 100, 100, 100, 100, 100, 100, 100, 100
+), nrow = 5, byrow = TRUE), dtype = torch_float())
+
+mask <- torch_zeros(3, 5)
+mask[1, ] <- 1
+mask[2, 1:3] <- 1
+mask[3, 1] <- 1
+
+readout(h, mask)
+```
+
+```text
+mean_h
+ 5  6
+ 2  2
+ 4  5
+
+max_h
+  9  10
+  3   3
+  4   5
+
+cat(mean_h, max_h)
+  5   6   9  10
+  2   2   3   3
+  4   5   4   5
+```
+
+Padding 的 100 完全没有进入池化：`mask_expanded` 把 padding 位置乘成 0，mean 的分母又用 `mask$sum()` 而不是固定的 `N`。这就是“变长分子图”能组成 batch 的关键。
+
+（c）参数量。
+
+三层 `BatchedGCNLayer`：
+
+- 第一层 $18\to64$：$18\times64+64=1{,}216$；
+- 第二层 $64\to64$：$64\times64+64=4{,}160$；
+- 第三层 $64\to64$：$4{,}160$。
+
+图读出后维度 $64\times2=128$，拼接 2 个全局特征得到 $130$。`nn_layer_norm(130)` 有 $130$ 个缩放参数和 $130$ 个偏置，共 260。预测头：
+
+- `fc1`：$130\times64+64=8{,}384$；
+- `fc2`：$64\times1+1=65$。
+
+总计
+
+$$
+1{,}216+4{,}160+4{,}160+260+8{,}384+65
+=\boxed{18{,}245}.
+$$
+
+（d）行归一化与对称归一化。
+
+分子图里每个原子最多只有几个共价键，度数分布远没有社交网络那么极端；本章的 `BatchedGCNLayer` 用的是
+
+$$
+\tilde A_{\text{norm}}=\tilde D^{-1}\tilde A,
+$$
+
+即每个原子对自己的邻居做平均。Cora 的对称归一化 $\tilde D^{-1/2}\tilde A\tilde D^{-1/2}$ 同时压低高度节点在发送端和接收端的权重，适合引用网络中“综述文章引用很多”这类长尾结构。两种做法都合理，关键是训练/推理保持一致。
+
+`torch_clamp(degree, min = 1e-5)` 防的是 padding 原子度数为 0 时除以 0。`max_atoms=55` 的 batch 里，短分子会有大量 padding 行，邻接矩阵对应行全 0；clamp 后 `degree_inv` 是一个很大的有限数，但 `adj_norm = adj * degree_inv` 仍然全 0（因为 `adj` 行是 0），所以 padding 原子不会污染真实原子。读出层再用 mask 把 padding 排除。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：GCN、GAT、LightGCN 的适用边界
+
+请从模型假设、数据形态和工程约束三个角度回答：
+
+- （a） GCN、GAT、LightGCN 各自最适合什么场景？为什么 LightGCN 的“去掉 $W$ 和 $\sigma$”只适用于 ID-only 的协同过滤，而不能直接搬到分子图？
+- （b） 过平滑为什么随着层数增加而出现？列出至少三种缓解方法，并说明 LightGCN 的层平均属于哪一类。
+- （c） 新用户和新物品的冷启动分别怎么处理？Folding-in 能解决哪一个，不能解决哪一个？
+- （d） 本章用 Cora 节点 1619 的异配性例子说明 GAT 的注意力可以“跨类别寻找语义互补的邻居”。这个例子能证明 GAT 一定优于 GCN 吗？你会怎样设计实验来验证？
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a）适用场景。
+
+- GCN：节点有特征、图结构相对同配（邻居倾向同类），计算预算有限。Cora 的引用网络就是典型：词袋特征 + 引用边，两层 GCN 就能得到 80% 左右的准确率。它给所有邻居按度数分配固定权重，简单、稳定、参数少。
+- GAT：邻居重要性差异大、存在异配边，或者需要解释“模型看了谁”。它用可学习的加性注意力替代固定的 $\tilde D^{-1/2}\tilde A\tilde D^{-1/2}$，可以为不同邻居分配不同权重；代价是 $N\times N$ 的得分矩阵和更多参数。Cora 上本章报告 GAT 81.89%、GCN 80.06%，但这是单次划分、不同超参数的比较，不能把 1.8 个百分点全部归因于注意力。
+- LightGCN：用户-物品二部图、ID-only 隐式反馈、需要大规模稀疏矩阵传播。它去掉特征变换和非线性，只保留邻居聚合与层平均，参数几乎只有初始 embedding；在 MovieLens 1M 上本章报告 HR@10 0.7714，明显高于 Item-CF 的 0.6445 和 GNN-Enhanced CF 的 0.6772。
+
+LightGCN 的简化依赖“输入没有内容特征”这个前提。分子图的节点特征（元素、电荷、杂化态、芳香性）本身有丰富的化学语义，$W$ 负责把这些手工特征映射到任务空间，$\sigma$ 提供非线性；如果直接去掉，模型就只剩对原子 one-hot/属性做线性平均，表达能力会明显下降。所以“LightGCN 更简单”不等于“所有图都应该去掉 $W$ 和 $\sigma$”。
+
+（b）过平滑。
+
+每层传播都把节点表示替换为邻居的加权平均。层数增加，感受野扩大，但不同节点共享的邻域越来越多；反复平均会压低高频信号，让同一连通分量内的表示趋于相似。极端情况下，所有节点难以区分，分类器只能输出接近先验的预测。
+
+常见缓解方法：
+
+1. 残差连接：$H^{(l+1)}=H^{(l)}+\text{GNN}(H^{(l)})$，保留自身信息；
+2. JKNet / 层拼接：把各层表示拼接或加权求和，让模型自己选择半径；
+3. DropEdge：训练时随机删边，减少过度平滑和过拟合；
+4. 层平均：LightGCN 的 $e=\frac1{K+1}\sum_k e^{(k)}$，直接混合不同层；
+5. 限制层数：很多任务 2–3 层就足够。
+
+LightGCN 的层平均属于“多层表示融合”，和 JKNet 的思想相近；它不是通过改传播矩阵，而是通过输出组合来保留第 0 层的 ID 信息。
+
+（c）冷启动。
+
+- 新用户：已有物品 embedding 可用时，Folding-in 把用户交互过的物品向量取平均（或按度数加权），实时构造用户向量；也可以训练一个用户侧内容塔，把年龄、地域、设备等特征映射到同一空间。
+- 新物品：没有任何交互，LightGCN 的图传播没有邻居可用，Folding-in 无法直接构造物品向量。需要物品内容特征（文本、图像、类目、价格）、双塔的物品塔、GraphSAGE 式的属性聚合，或者等物品积累足够交互后重新训练。
+- 评估：冷启动要单独报告，不能把新用户/新物品混进整体指标里“平均掉”；否则一个在老用户上很强的模型，可能在新用户上完全失效。
+
+Folding-in 解决的是“物品侧已训练好、用户侧新来”的归纳式推断；它不解决新物品，也不解决完全没有交互的新用户（此时连平均的集合都是空的）。
+
+（d）异配性例子与实验设计。
+
+不能。节点 1619 的注意力可视化是一个个案：它说明在这个训练好的模型里，某些跨类别邻居获得了较高权重，但不能证明：
+
+1. 这个权重是“因为语义互补”而不是训练集/随机种子的偶然；
+2. GAT 在所有异配节点上都优于 GCN；
+3. 81.89% 与 80.06% 的差距（约 1.8 个百分点）来自注意力，而不是 8 个头、300 轮、不同 dropout/学习率带来的容量差异。
+
+要验证，至少需要：
+
+- 控制变量：同一数据划分、同一训练轮数/参数量/正则化，比较 GCN 与 GAT；最好做多次随机种子，报告均值和标准差。
+- 分层评估：按节点的同配比例（邻居中同类占比）分组，看 GAT 的增益是否集中在低同配组。
+- 消融：把 GAT 的注意力替换为均匀权重（或固定度数权重），保持其他结构不变；如果增益消失，才能把功劳归给注意力。
+- 鲁棒性：在合成异配图、随机边扰动、不同同配率下重复实验。
+- 可解释性：检查高注意力邻居是否真的与标签/特征相关，而不是只看一张 ego-network 图。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：七个容易复现的坑
+
+下面七段代码/结论分别来自本章或配套脚本。请指出问题、解释后果，并给出修正。
+
+- （a） `code/11_GCN_Zachary.R` 的输出注释写着：
+  ```r
+  cat("预测结果 (0=Mr.Hi, 1=John A):\n")
+  print(as.numeric(predictions))
+  ```
+  但标签是 `1 = Mr. Hi, 2 = John A`。`torch_argmax()` 返回的下标从几开始？这段注释会误导读者什么？
+- （b） 正文说 Cora 的 GCN “经过 50 轮训练”得到 80.06%，但 `code/11_GCN_Cora.R` 里写的是 `epochs <- 100`。这会影响复现吗？
+- （c） 正文说 BPR 的负样本是“随机抽取一个未交互物品”，代码却是：
+  ```r
+  neg_i <- torch_randint(
+    low = num_users + 1, high = num_nodes + 1,
+    size = c(length(batch_idx)), dtype = torch_long()
+  )
+  ```
+  这段代码会抽到正样本吗？在 MovieLens 1M 上大概多严重？
+- （d） LightGCN 的公式是
+  $$
+  e_u^{(k+1)}=\sum_{i\in\mathcal N_u}
+  \frac{1}{\sqrt{|D_u|}\sqrt{|D_i|}}e_i^{(k)},
+  $$
+  但 `build_sparse_adjacency()` 里有一行
+  ```r
+  self_loop <- data.table(src = 1:n_nodes, dst = 1:n_nodes)
+  ```
+  这会给传播带来什么变化？标准 LightGCN 需要自环吗？
+- （e） GAT 用 `-1e9` 填充不存在的边。如果某个节点没有邻居也没有自环，整行都是 `-1e9`，Softmax 会输出什么？为什么本章 Cora 没有触发？
+- （f） 正文说 ESOL 的 MSE 收敛到 0.43，“对应平均预测误差约 0.65 LogS”。0.65 是 MAE 还是 RMSE？从 0.43 能直接推出 MAE 吗？
+- （g） 正文一面说 $\vec a_{src}$ 评估“源节点（发出注意力）”，一面又说“行表示目标节点（接收），列表示源节点（发送）”。代码 `scores <- attn_src + attn_dst$t()` 后接 `attention %*% wh`，到底哪一行是发送者、哪一行是接收者？名称需要怎么改？
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a）Zachary 的 0/1 注释。
+
+R torch 的 `torch_argmax()` 返回 1-based 下标，和 R 的向量索引一致。标签向量本身也是 1/2：
+
+```r
+manual_labels <- c(1, 1, ..., 2, 2)
+```
+
+所以预测结果是 1 或 2，不可能是 0 或 1。实际运行会得到类似
+
+```text
+pred: 1,1,2,1,1,1,1,1,2,2,...
+correct: 33 / 34
+wrong: 1
+```
+
+节点 3 是唯一分错的节点。注释应改为：
+
+```r
+cat("预测结果 (1=Mr.Hi, 2=John A):\n")
+```
+
+如果读者按“0=Mr.Hi, 1=John A”去映射，会把所有预测整体错位：预测 1 被当成 John A，预测 2 被当成不存在的类别。这个错误不影响模型训练，但会让结果解读完全反掉。
+
+（b）Cora 的 50/100 轮。
+
+正文与脚本不一致。`code/11_GCN_Cora.R:111` 是 `epochs <- 100`，而正文 `11-gnn.qmd:391` 说“经过 50 轮训练”。在本机固定种子的一次复核中：
+
+- 50 轮：测试准确率约 80.80%；
+- 100 轮：测试准确率约 79.79%（换 torch 随机种子会得到 78.89% 等不同值）。
+
+随机种子、初始化、dropout 都会让数值波动，但“脚本默认 100 轮”与“正文说 50 轮”是明确的配置不一致。读者直接运行脚本，得到的不一定是正文报告的 80.06%。修正方式：要么把脚本改成 `epochs <- 50`，要么把正文改成“100 轮”并重新报告指标；同时保留随机种子和多次运行的均值/标准差，避免把单次结果当成稳定结论。
+
+（c）BPR 负采样抽到正样本。
+
+会。`torch_randint(low = num_users + 1, high = num_nodes + 1)` 在全部物品节点上均匀采样，没有排除当前用户已经交互过的物品。MovieLens 1M 按本章 80/20 时序切分后：
+
+- 训练集（80/20 时序切分后）有 797,758 条交互、6040 个用户；负采样在**全库 3706 个物品**上均匀进行（训练集实际覆盖其中 3667 个）；
+- 每个用户的训练正样本数平均 132.08，中位数 76，最大 1851；
+- 对一条正样本对随机抽一个物品，抽中该用户某个训练正样本的平均概率约
+
+$$
+\frac{132.08}{3706}\approx 3.56\%,
+$$
+
+  最大约 49.95%（1851/3706，有一个用户交互了接近一半的物品）。
+
+抽中正样本时，$e_i=e_j$，BPR 得分差为 0，$\log\sigma(0)=-\log2$，损失不是 0 但梯度对嵌入的区分项会消失；更糟的是同一个物品同时以正、负身份进入损失，标签自相矛盾。修正：对每个 `(u, i)` 从 `setdiff(all_items, user_positive_items[[u]])` 中采样；批量实现可以先用 `torch_randint` 抽候选，再用布尔掩码/重采样把冲突位置替换掉，或者维护每个用户的负样本候选数组。
+
+（d）LightGCN 的自环。
+
+标准 LightGCN 的二部图传播不加自环：
+
+$$
+e_u^{(k+1)}=\sum_{i\in\mathcal N_u}
+\frac{1}{\sqrt{|D_u|}\sqrt{|D_i|}}e_i^{(k)},
+$$
+
+第 0 层 $e_u^{(0)}$ 通过层平均保留：
+
+$$
+e_u=\frac1{K+1}\sum_{k=0}^K e_u^{(k)}.
+$$
+
+代码 `self_loop <- data.table(src = 1:n_nodes, dst = 1:n_nodes)` 把每个节点连到自己，传播变成“邻居 + 自身”的混合，而且度数 $D$ 也把自环保留进去，连非自环边的归一化系数都会变。这不是标准 LightGCN，而是“带自环的 LightGCN 变体”。如果论文/正文的公式没有自环，复现时应删掉 `self_loop`；如果保留，必须在正文和实验设置里明确说明，并把这组指标标成变体结果。
+
+（e）GAT 全掩码行。
+
+整行 `-1e9` 经过 Softmax 会得到均匀分布 $(1/N,\dots,1/N)$，而不是“没有邻居”。本章 Cora 在构图时执行了
+
+```r
+adj_binary <- adj + diag(num_nodes)
+```
+
+每个节点都有自环，所以每一行至少有一个合法位置，不会全掩码。对没有自环的图，应显式处理空邻居行（置零或使用空邻居向量），或者统一加自环；不要依赖 `-1e9` 的数值下溢。
+
+（f）MSE 与 RMSE。
+
+$$
+\operatorname{RMSE}=\sqrt{\operatorname{MSE}}=\sqrt{0.43}\approx0.6557.
+$$
+
+所以 0.65 是 RMSE，不是 MAE。MSE 只给出平方误差的均值，不能直接推出平均绝对误差；MAE 需要单独在验证集上计算。正文应写成“均方根误差（RMSE）约 0.66 LogS”，或者如果确实想报告 MAE，就补上 MAE 的数值。把 RMSE 说成“平均预测误差”在口语里可以接受，但在模型对比和误差解释里容易和 MAE 混淆。
+
+（g）GAT 的发送/接收方向。
+
+代码：
+
+```r
+attn_src <- torch_matmul(wh, self$a_src)   # N x 1
+attn_dst <- torch_matmul(wh, self$a_dst)   # N x 1
+scores <- attn_src + attn_dst$t()          # N x N
+attention <- nnf_softmax(scores, dim = 2)   # 每行归一化
+h_prime <- torch_matmul(attention, wh)      # 行 i 聚合列 j
+```
+
+`h_prime` 的第 $i$ 行是 $\sum_j P_{ij}wh_j$，所以第 $i$ 行是接收者，第 $j$ 列是发送者。而 `attn_src` 作用在行 $i$ 上、`attn_dst` 作用在列 $j$ 上，因此按“src=发送、dst=接收”的命名，代码里的两个名字正好反了。正文第 562 行其实写对了：“行表示目标节点（接收），列表示源节点（发送）”；前面第 473–482 行的解释则把 $i$ 说成发送者，二者矛盾。
+
+修法有两种：
+
+1. 交换命名：把行向量叫 `a_dst`（接收者），列向量叫 `a_src`（发送者）；或
+2. 保持名字不变，在正文中明确采用“行=src、列=dst”的相反约定，并把“发出/接收”的解释对调。
+
+模型训练本身不受影响（只是名称和解释），但读代码、写文档和做注意力可视化时必须统一，否则会把“节点 i 对 j 的注意力”画反。
+
+:::
+
+---
+
+## 进一步练习（可选）
+
+如果希望把本章内容串起来，可以再做一个小项目：在 Zachary 或 Cora 上分别训练 GCN、GAT、GraphSAGE，固定同一组训练/测试节点，比较测试准确率、参数量和训练时间；然后把 Cora 的边随机删除 10%、30%、50%，观察三种模型对结构噪声的鲁棒性。报告时至少给出三次随机种子的均值和标准差，不要只报最好的一次。

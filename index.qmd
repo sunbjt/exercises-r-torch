@@ -1,0 +1,35 @@
+# 使用说明 {.unnumbered}
+
+本练习册是《深度学习与生成式 AI——R torch 核心算法与实战》的配套课后练习，覆盖主书第 3～15 章。练习题按「概念与推导」「编程实践」「开放思考」「纠错与陷阱」四类编排，参考答案以折叠卡片的形式附在每道题之后。
+
+::: {.callout-note}
+本书章节标题中的「第 N 章」均指主书的章节编号；本练习册本身不单独编号。
+:::
+
+## 与主书的对应关系
+
+点击主题即可进入对应的练习页。
+
+| 主书章节 | 练习主题 |
+| --- | --- |
+| 第 3 章 | [自动微分](03-math-ml-exercises.qmd) |
+| 第 4 章 | [多层感知机](04-backforward-nn-exercises.qmd) |
+| 第 5 章 | [优化与训练动力学](05-optimizer-exercises.qmd) |
+| 第 6 章 | [工程化实验](06-regularization-exercises.qmd) |
+| 第 7 章 | [卷积网络](07-convolution-exercises.qmd) |
+| 第 8 章 | [循环网络](08-rnn-lstm-exercises.qmd) |
+| 第 9 章 | [Transformer](09-transformer-exercises.qmd) |
+| 第 10 章 | [深度推荐模型](10-recsys-exercises.qmd) |
+| 第 11 章 | [图神经网络](11-gnn-exercises.qmd) |
+| 第 12 章 | [变分自编码器](12-vae-exercises.qmd) |
+| 第 13 章 | [生成对抗网络](13-GAN-exercises.qmd) |
+| 第 14 章 | [扩散模型](14-diffusion-exercises.qmd) |
+| 第 15 章 | [解释性与诊断](15-explainable-ai-exercises.qmd) |
+
+: {tbl-colwidths="[25,55]"}
+
+## 使用建议
+
+- 先独立完成，再展开参考答案。参考答案中的关键数值在 R 4.6.1 与 torch 0.17.0 环境下验证过；浮点结果会随平台和随机种子在小数末位有差异，比较时关注量级和趋势即可。
+- 需要运行代码的题目，请先固定随机种子，再比较结果。
+- 本书为静态页面，代码块按原样展示，构建时不会执行，读者可将代码复制到本地 R 会话中运行。

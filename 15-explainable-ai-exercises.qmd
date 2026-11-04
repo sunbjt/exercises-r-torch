@@ -1,0 +1,735 @@
+# 15 解释性与诊断 {.unnumbered}
+
+本章把“模型为什么这样预测”拆成四层：先看错误样本，再看全局重要性，然后做单样本归因，最后检查预测不确定性。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：逐样本损失与混淆矩阵；置换重要性与 ALE；Break Down 与 Shapley 值。
+- 编程实践（练习 4–6）：实现 Top-K 高损失分析；实现 Grad-CAM；实现温度缩放与 MC Dropout。
+- 开放思考（练习 7）：解释的忠实性、捷径学习、SHAP 的边界与不确定性的工程取舍。
+- 纠错与陷阱（练习 8）：正文和脚本中八处容易误读或误用的地方。
+
+建议用时约 3 小时。练习 1–3 可以边读正文边做；练习 4–6 建议在 R 4.6.1 / torch 0.17.0 下实际运行；练习 8 需要对照 `code/15_*.R` 逐行阅读。答案中的数值用固定随机种子核对过；涉及训练的数值会随种子、设备和轮数变化，答案里给出的是量级与趋势，不应当作唯一标准。
+
+## 一、概念与推导
+
+### 练习 1：逐样本损失、混淆矩阵与错误分析
+
+某 CIFAR-10 模型在 10,000 张测试图上的混淆矩阵如下。矩阵按 `table(预测类别, 真实类别)` 生成：行是预测类别，列是真实类别，类别编号 1–10 依次对应 airplane、automobile、bird、cat、deer、dog、frog、horse、ship、truck。
+
+```text
+       1   2   3   4   5   6   7   8   9  10
+  1  804   2  23   5   0   0   1   2  16   2
+  2   10 942   1   1   0   1   0   0  11  34
+  3   18   2 806  35  12  16  16   7   3   1
+  4   35   7  40 785  40 147  21  34  12  12
+  5   11   0  57  21 875  24  11  19   2   0
+  6    6   0  20  77  12 777   3  35   0   1
+  7   11   2  30  51  27  15 939   2   5   3
+  8   10   1  19  18  31  19   8 899   0   3
+  9   50   7   3   4   1   1   1   1 936  15
+ 10   45  37   1   3   2   0   0   1  15 929
+```
+
+- （a） 写出单样本交叉熵损失 $\ell_i$ 的公式。解释为什么错误分析要用 `nn_cross_entropy_loss(reduction = "none")`，而不是默认的标量平均损失；并说明为什么不应该先算 `softmax` 再取 `log`。
+- （b） 由矩阵计算总体准确率、每个类别的召回率（recall）和宏平均召回率（macro recall）。为什么这里的 macro recall 恰好等于总体准确率？
+- （c） 计算宏平均精确率（macro precision）。如果把 `table(预测, 真实)` 转置成 `table(真实, 预测)`，准确率、recall、precision 各会怎样变化？为什么混淆矩阵的方向必须写清楚？
+- （d） 找出非对角线上的前 6 个最大计数，写出“真实类别 → 预测类别”的对应关系，并结合 CIFAR-10 的类别名称解释哪些是语义相近的困难样本，哪些可能提示标注问题。
+- （e） 三个样本的 logits 与真实类别如下。分别计算交叉熵，并说明“损失高”是否等价于“分类错误”：
+
+| 样本 | logits | 真实类别 |
+| :--- | :--- | :--- |
+| A | $(2.0,\ 1.9,\ 0)$ | 1 |
+| B | $(0,\ 5.0,\ 0)$ | 1 |
+| C | $(5.0,\ 0,\ 0)$ | 1 |
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a） 对第 $i$ 个样本，设 logits 为 $\mathbf z_i=(z_{i1},\dots,z_{iK})$，真实类别为 $c_i$，则
+
+$$
+\ell_i=-\log p_{i,c_i}
+=-\log\frac{\exp(z_{i,c_i})}{\sum_{k=1}^{K}\exp(z_{ik})}
+=\log\sum_{k=1}^{K}\exp(z_{ik})-z_{i,c_i}.
+$$
+
+默认的 `nn_cross_entropy_loss()` 返回 $\frac1B\sum_i\ell_i$，一个标量；`reduction = "none"` 返回长度为 batch size 的向量，才能按样本排序、定位高损失样本。交叉熵内部用 log-sum-exp 稳定计算；如果先 `softmax()` 再 `log()`，当某个 logit 很大时 $p$ 会被 float32 舍入成 1，`log(1) = 0`，梯度信息丢失；当 $p$ 很小时又可能直接下溢成 0，得到 `-Inf`。所以应直接把 logits 交给 `nn_cross_entropy_loss()`。
+
+（b） 总数 $N=10{,}000$，对角线之和
+
+$$
+\sum_k m_{kk}=804+942+806+785+875+777+939+899+936+929=8{,}692,
+$$
+
+总体准确率为
+
+$$
+\mathrm{acc}=\frac{8{,}692}{10{,}000}=0.8692.
+$$
+
+因为每一列（每个真实类别）恰好有 1,000 个样本，类别 $k$ 的召回率为
+
+$$
+\mathrm{recall}_k=\frac{m_{kk}}{\sum_j m_{jk}}=\frac{m_{kk}}{1000}.
+$$
+
+逐类结果为
+
+| 类别 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| recall | 0.804 | 0.942 | 0.806 | 0.785 | 0.875 | 0.777 | 0.939 | 0.899 | 0.936 | 0.929 |
+
+宏平均召回率
+
+$$
+\frac1{10}\sum_{k=1}^{10}\mathrm{recall}_k=0.8692.
+$$
+
+它等于总体准确率，是因为测试集类别均衡：每个真实类别都是 1,000 张。若类别不均衡，macro recall 与 accuracy 一般不相等；accuracy 会被大类别主导，macro recall 则给每个类别相同权重。
+
+（c） 精确率的分母是预测为该类的样本数，即行和：
+
+$$
+\mathrm{precision}_k=\frac{m_{kk}}{\sum_j m_{kj}}.
+$$
+
+逐类结果为
+
+| 类别 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| precision | 0.9404 | 0.9420 | 0.8799 | 0.6929 | 0.8578 | 0.8346 | 0.8654 | 0.8919 | 0.9185 | 0.8993 |
+
+宏平均精确率为 0.8723。转置矩阵后，对角线不变，所以 accuracy 仍为 0.8692；但行列的角色互换，原来的 recall 变成 precision，precision 变成 recall，因此 macro recall 与 macro precision 会交换数值。混淆矩阵必须注明“行是预测还是真实”，否则读者会把 0.8692 的 macro recall 误读成 macro precision。
+
+（d） 前 6 个非对角计数为
+
+| 真实类别 | 预测类别 | 计数 |
+| :--- | :--- | ---: |
+| dog (6) | cat (4) | 147 |
+| cat (4) | dog (6) | 77 |
+| bird (3) | deer (5) | 57 |
+| cat (4) | frog (7) | 51 |
+| airplane (1) | ship (9) | 50 |
+| airplane (1) | truck (10) | 45 |
+
+cat↔dog 是典型的语义相近、纹理相似的困难样本；bird→deer 可能来自背景（草地、树林）主导；airplane→ship 常因为两者都出现在蓝天/水面的大背景下，模型可能在看背景而不是主体。若某张图被反复高损失且人工检查后发现标签明显错误，则属于标注问题；若标签正确但图像模糊、遮挡或处于类别边界，则属于困难样本或分布外样本。错误分析的价值就在于把这三类区分开，而不是笼统地“再训几轮”。
+
+（e） 三个样本的交叉熵分别为
+
+$$
+\ell_A=-\log\frac{e^{2}}{e^{2}+e^{1.9}+e^{0}}
+=-\log(0.4902)=0.7130,
+$$
+
+$$
+\ell_B=-\log\frac{e^{0}}{e^{0}+e^{5}+e^{0}}
+=-\log(0.00666)=5.0134,
+$$
+
+$$
+\ell_C=-\log\frac{e^{5}}{e^{5}+e^{0}+e^{0}}
+=-\log(0.9867)=0.0134.
+$$
+
+样本 A 分类正确，但两个类的 logit 只差 0.1，损失 0.713，属于“预测对了但没把握”；样本 B 分类错误且错得很自信，损失 5.013；样本 C 分类正确且自信，损失 0.013。因此 高损失不等于分类错误：它同时覆盖“错误且自信”“正确但犹豫”两种情况。Top-K 高损失样本必须配合真实标签、预测标签和图像人工审查，不能直接当作“标注错误”来清洗。
+
+:::
+
+### 练习 2：置换重要性、PDP 与 ALE
+
+设模型 $f$ 在验证集上有损失 $L$，特征为 $x_1,\dots,x_p$。
+
+- （a） 写出置换重要性（permutation importance）的定义。DALEX 的 `model_parts(explainer, B = 50)` 中 $B$ 控制什么？如果某个特征的重要性估计为负数，应如何解释？
+- （b） 为什么“随机打乱一列”会破坏特征之间的相关性？在 Ames 数据中，`Year_Built`、`Gr_Liv_Area` 和 `Neighborhood` 高度相关时，置换重要性实际衡量的是“模型对这个特征的依赖”，还是“这个特征本身的因果效应”？请说明。
+- （c） 写出 PDP 的定义，并解释它在特征相关时为什么会生成“现实中不存在的样本”。写出 ALE 的局部差分与累加步骤，说明 ALE 为什么能缓解这个问题，以及 ALE 曲线为什么要中心化。
+- （d） 考虑一个已知模型 $f(x_1,x_2)=x_1x_2$，数据满足 $x_2\approx x_1$（相关系数约 0.999）。运行下面的模拟，填写 PDP 与 ALE 在网格点上的值，并解释“PDP 几乎是平的，而 ALE 是 U 形”的原因。
+
+```r
+set.seed(1)
+n <- 5000
+x1 <- rnorm(n)
+x2 <- x1 + rnorm(n, sd = 0.03)
+f <- function(a, b) a * b
+
+# PDP：固定 x1 = v，对其余变量的经验分布求平均
+br <- seq(-2, 2, length.out = 9)
+pdp <- sapply(br, function(v) mean(f(v, x2)))
+
+# ALE：在每个 x1 区间内做局部差分，再累加
+K <- 8
+ale <- numeric(K + 1)
+for (k in 1:K) {
+  lo <- br[k]; hi <- br[k + 1]
+  inb <- x1 > lo & x1 <= hi
+  d <- mean(f(hi, x2[inb]) - f(lo, x2[inb]))
+  ale[k + 1] <- ale[k] + d
+}
+ale <- ale - mean(ale)
+
+data.frame(x1 = br, PDP = pdp, ALE = ale)
+```
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a） 对特征 $j$，重复 $b=1,\dots,B$ 次：把验证集的第 $j$ 列随机置换得到 $X^{(j),\pi_b}$，计算
+
+$$
+\mathrm{PI}_j
+=\frac1B\sum_{b=1}^{B}
+\left[
+L\bigl(f,X^{(j),\pi_b}\bigr)-L(f,X)
+\right].
+$$
+
+若 $L$ 是 RMSE，则 $\mathrm{PI}_j$ 是“打乱该列后 RMSE 的增加量”。$B=50$ 表示做 50 次随机置换，用这 50 个增量的分布估计均值和波动；$B$ 越大，估计越稳定，但计算越贵。负值表示置换后损失反而下降，通常说明该特征不重要，或者 50 次抽样的噪声/特征间替代效应让估计出现了负号；实践上可以把负值截断为 0，并同时看置信区间，而不是把负值解释成“这个特征有害”。
+
+（b） 置换一列会同时破坏该列与其它列之间的联合关系。例如 `Year_Built` 与 `Gr_Liv_Area`、`Neighborhood` 相关，打乱 `Year_Built` 后，模型看到的“老房子 + 大草坪 + 好街区”组合在现实中并不存在，预测自然会变差。因此置换重要性衡量的是模型对第 $j$ 列的依赖程度（包含它作为其它相关特征代理的部分），不是“如果把这一列因果性地改变，房价会变多少”。两个高度相关的特征往往会分摊重要性：打乱任意一个，另一个还能提供信息，所以单个特征的重要性可能被低估；这也是需要看相关性和分组置换的原因。
+
+（c） PDP 的定义是
+
+$$
+\mathrm{PDP}_j(v)=\frac1n\sum_{i=1}^{n}
+f\bigl(v,\mathbf x_{i,-j}\bigr).
+$$
+
+它对每个 $v$，把第 $j$ 列强制设为 $v$，其余列保留真实观测值，然后平均。若 $x_j$ 与其它特征相关，$(v,\mathbf x_{i,-j})$ 可能落在数据支撑之外，是“现实中不会出现的样本”；模型在这些伪造点上外推，PDP 就会画出并不存在的趋势，或把强交互抹平。
+
+ALE 不直接对全局网格求平均，而是在第 $j$ 列的每个小区间 $[z_{k-1},z_k]$ 内，只使用该区间内的真实观测：
+
+$$
+\widehat{\mathrm{ALE}}_j(z_k)
+=\sum_{\ell=1}^{k}
+\left[
+\frac1{n_\ell}\sum_{i:x_{ij}\in[z_{\ell-1},z_\ell]}
+\bigl(
+f(z_\ell,\mathbf x_{i,-j})
+-f(z_{\ell-1},\mathbf x_{i,-j})
+\bigr)
+\right].
+$$
+
+局部差分只改变 $x_j$ 一小步，其余特征保持该观测的真实值，因此不会跑到远离数据支撑的区域；再把局部效应沿 $x_j$ 累加，得到整条曲线。最后通常减去曲线均值（中心化），因为 ALE 的绝对起点是任意的，只有形状和相对变化有解释意义。DALEX 中对应 `model_profile(explainer, variables = "Year_Built", type = "accumulated")`。
+
+（d） 上述代码在 `set.seed(1)` 下的输出为
+
+```text
+       x1    PDP    ALE
+1  -2.0  0.007  1.143
+2  -1.5  0.005  0.288
+3  -1.0  0.003 -0.329
+4  -0.5  0.002 -0.696
+5   0.0  0.000 -0.818
+6   0.5 -0.002 -0.696
+7   1.0 -0.003 -0.326
+8   1.5 -0.005  0.287
+9   2.0 -0.007  1.148
+```
+
+作为对照，中心化后的 $x_1^2/2$ 在同样网格上约为
+
+```text
+1.167, 0.292, -0.333, -0.708, -0.833, -0.708, -0.333, 0.292, 1.167
+```
+
+PDP 几乎是一条斜率为 0 的平线：固定 $x_1=v$ 后，PDP 对 $x_2$ 的边缘分布求平均，而 $x_2$ 的均值近似为 0，所以 $v\cdot E[x_2]\approx0$，真实的二次关系被“平均掉”了。ALE 则沿着数据流形做局部差分：在 $x_1$ 的某个小区间内，$x_2$ 也随 $x_1$ 变化，局部斜率约为 $x_1$，累加后得到 $\approx x_1^2/2$ 的 U 形曲线。注意 ALE 估计的是“固定其它特征时 $x_1$ 的局部效应”，不是沿数据流形的全导数（全导数会是 $x_1^2$）；在强相关数据上，两种曲线回答的是不同的问题，不能混为一谈。
+
+:::
+
+### 练习 3：Break Down 与 Shapley 值
+
+设三个特征的博弈价值函数 $v(S)$ 如下：
+
+| $S$ | $\varnothing$ | $\{1\}$ | $\{2\}$ | $\{3\}$ | $\{1,2\}$ | $\{1,3\}$ | $\{2,3\}$ | $\{1,2,3\}$ |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| $v(S)$ | 0 | 1 | 1 | 0 | 3 | 2 | 2 | 5 |
+
+- （a） 叙述 Break Down 的“基线 + 逐步替换”过程。为什么最终预测值等于基线加上所有特征的贡献？为什么贡献依赖于替换顺序？
+- （b） 写出 Shapley 值的排列平均公式，并对上表枚举全部 $3!=6$ 种顺序，计算 $\phi_1,\phi_2,\phi_3$。验证效率性（efficiency）：$\sum_i\phi_i=v(\{1,2,3\})$。
+- （c） 分别按顺序 $1\to2\to3$ 和 $3\to1\to2$ 做 Break Down，写出每一步的贡献。比较这两条路径与 (b) 的 Shapley 值，说明“Shapley 值平均了顺序偏见”具体平均掉了什么。
+- （d） 对 $N$ 个特征，精确 Shapley 需要枚举多少种顺序？为什么实际中常用 KernelSHAP、TreeSHAP 或蒙特卡洛采样？在什么情况下仍值得精确枚举？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a） 设背景数据集为 $\mathcal D$，模型预测函数为 $f$。Break Down 先算基线
+
+$$
+v_0=\frac1{|\mathcal D|}\sum_{\mathbf x\in\mathcal D}f(\mathbf x),
+$$
+
+然后按某个顺序 $j_1,j_2,\dots,j_p$ 依次把背景样本的第 $j_k$ 列替换成待解释样本 $x^\star$ 的对应值，得到 $v_k$。第 $k$ 个特征的贡献是
+
+$$
+c_{j_k}=v_k-v_{k-1}.
+$$
+
+所有特征都替换完后，背景集里每个样本都变成了 $x^\star$ 的副本，所以 $v_p=f(x^\star)$，于是
+
+$$
+f(x^\star)=v_0+\sum_{k=1}^{p}c_{j_k}.
+$$
+
+贡献依赖于顺序，是因为特征之间存在交互：先替换 $A$ 时，$B$ 还是背景值，$A$ 的边际贡献包含了“在典型 $B$ 下 $A$ 的作用”；先替换 $B$ 时，$A$ 的边际贡献就变成“在 $B=x^\star_B$ 下 $A$ 的作用”。两种顺序对应不同的反事实路径，因此会给出不同的分配。DALEX 的 `break_down` 通常用贪心策略选择“当前最能解释差距”的特征，但本质上仍然是一条路径，仍然有顺序依赖。
+
+（b） Shapley 值定义为
+
+$$
+\phi_i=\frac1{N!}\sum_{\pi\in\Pi}
+\left[
+v\bigl(S_\pi^i\cup\{i\}\bigr)-v\bigl(S_\pi^i\bigr)
+\right],
+$$
+
+其中 $\Pi$ 是所有 $N!$ 种特征顺序，$S_\pi^i$ 是在顺序 $\pi$ 中排在 $i$ 之前的特征集合。对本表枚举 6 种顺序，得到
+
+$$
+\phi_1=2,\qquad \phi_2=2,\qquad \phi_3=1.
+$$
+
+验证：$2+2+1=5=v(\{1,2,3\})$，效率性成立。一个可直接运行的枚举代码如下（`empty` 是空集的哨兵名）：
+
+```r
+v <- c(empty = 0, `1` = 1, `2` = 1, `3` = 0,
+       `12` = 3, `13` = 2, `23` = 2, `123` = 5)
+key <- function(s) if (length(s) == 0) "empty" else paste(sort(s), collapse = "")
+perms <- list(c(1,2,3), c(1,3,2), c(2,1,3),
+              c(2,3,1), c(3,1,2), c(3,2,1))
+phi <- c(0, 0, 0)
+for (p in perms) {
+  pre <- c()
+  for (i in p) {
+    phi[i] <- phi[i] + v[[key(c(pre, i))]] - v[[key(pre)]]
+    pre <- c(pre, i)
+  }
+}
+phi / length(perms)   # 2, 2, 1
+```
+
+（c） 顺序 $1\to2\to3$：
+
+- 特征 1：$v(\{1\})-v(\varnothing)=1-0=1$；
+- 特征 2：$v(\{1,2\})-v(\{1\})=3-1=2$；
+- 特征 3：$v(\{1,2,3\})-v(\{1,2\})=5-3=2$。
+
+贡献向量为 $(1,2,2)$。
+
+顺序 $3\to1\to2$：
+
+- 特征 3：$v(\{3\})-v(\varnothing)=0-0=0$；
+- 特征 1：$v(\{1,3\})-v(\{3\})=2-0=2$；
+- 特征 2：$v(\{1,2,3\})-v(\{1,3\})=5-2=3$。
+
+贡献向量为 $(2,3,0)$。
+
+两条路径的总和都是 5，但分配给特征 3 的贡献从 2 变成 0，分配给特征 2 的贡献从 2 变成 3。Shapley 值 $(2,2,1)$ 正是 6 条路径贡献的算术平均：它没有消除交互，而是把“谁先谁后”带来的分配差异在所有顺序上平均掉，使每个特征的贡献满足对称性、零贡献性和效率性等公理。
+
+（d） 精确 Shapley 需要枚举 $N!$ 种顺序；每算一个特征的边际贡献还要做两次价值函数查询，朴素实现的总查询量是 $O(N!\,N)$。$N=10$ 时 $10!\approx3.6\times10^6$，$N=20$ 时已经约 $2.4\times10^{18}$，不可行。KernelSHAP 把 Shapley 值写成一个加权最小二乘问题，用采样近似；TreeSHAP 利用树结构在多项式时间内精确计算；DALEX 的 `predict_parts(type = "shap")` 也常用采样估计，因此图上会出现“不同顺序下的波动范围”。当特征数很少（例如 $N\le 8$）、价值函数查询很便宜，或需要给审计/合规报告一个无采样误差的基准时，精确枚举仍然值得。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：实现 Top-K 高损失样本分析
+
+给定一个分类模型、一个 `dataloader` 和设备，编写函数 `top_losses()`，返回损失最高的 $k$ 个样本的全局索引和损失值。要求：
+
+- （a） 使用 `nn_cross_entropy_loss(reduction = "none")` 得到逐样本损失，不能用默认的平均损失。
+- （b） 在 `with_no_grad()` 中前向，切到 `model$eval()`，避免 Dropout/BatchNorm 改变推理行为。
+- （c） 正确处理多个 batch 的拼接；说明如果 `dataloader` 开了 `shuffle = TRUE`，为什么返回的“全局索引”不能直接拿来索引原始数据集，应该怎样修。
+- （d） 用下面的合成数据自检：5 个样本、3 个类别，打印 Top-3 的索引和损失，并解释并列损失时的排序行为。
+
+```r
+library(torch)
+set.seed(1)
+logits <- torch_tensor(matrix(c(
+  2, 1, 0,
+  0, 3, 1,
+  1, 2, 4,
+  0, 0, 5,
+  3, 1, 0
+), nrow = 5, byrow = TRUE))
+targets <- torch_tensor(c(1, 2, 3, 3, 1), dtype = torch_long())
+```
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）–（c） 一个可用的实现如下：
+
+```r
+library(torch)
+library(coro)
+
+top_losses <- function(model, dataloader, device, k = 5) {
+  model$eval()
+  criterion <- nn_cross_entropy_loss(reduction = "none")
+
+  all_losses <- numeric(0)
+  all_indices <- integer(0)
+  offset <- 0L
+
+  coro::loop(for (batch in dataloader) {
+    inputs <- batch[[1]]$to(device = device)
+    targets <- batch[[2]]$to(device = device)
+
+    with_no_grad({
+      losses <- criterion(model(inputs), targets)
+    })
+
+    vals <- as.numeric(losses$cpu())
+    all_losses <- c(all_losses, vals)
+    # 只有 shuffle = FALSE 时，offset + seq_along(vals) 才等于原始数据集下标
+    all_indices <- c(all_indices, offset + seq_along(vals))
+    offset <- offset + length(vals)
+  })
+
+  k <- min(k, length(all_losses))
+  ord <- order(all_losses, decreasing = TRUE)
+  list(
+    indices = all_indices[ord[seq_len(k)]],
+    losses  = all_losses[ord[seq_len(k)]]
+  )
+}
+```
+
+如果 `dataloader` 使用 `shuffle = TRUE`，batch 内的顺序和原始数据集顺序不再对应，`offset + seq_along(vals)` 只是“第几个被读到的样本”，不是原始行号。修法有三种：评估时把 `shuffle` 设为 `FALSE`；给 `dataset` 的 `.getitem` 额外返回原始索引；或者从 `dataloader` 的 sampler 里读取每个 batch 的索引并同 `losses` 一起保存。错误分析通常不需要 shuffle，直接用 `shuffle = FALSE` 最省事。
+
+（d） 对给定数据运行：
+
+```r
+logits <- torch_tensor(matrix(c(
+  2, 1, 0,
+  0, 3, 1,
+  1, 2, 4,
+  0, 0, 5,
+  3, 1, 0
+), nrow = 5, byrow = TRUE))
+targets <- torch_tensor(c(1, 2, 3, 3, 1), dtype = torch_long())
+criterion <- nn_cross_entropy_loss(reduction = "none")
+losses <- as.numeric(criterion(logits, targets))
+losses
+# 0.4076 0.1698 0.1698 0.0134 0.1698
+
+ord <- order(losses, decreasing = TRUE)
+data.frame(index = ord[1:3], loss = round(losses[ord[1:3]], 4))
+#   index   loss
+# 1     1 0.4076
+# 2     2 0.1698
+# 3     3 0.1698
+```
+
+第 1 个样本损失最高：它的 logits 是 $(2,1,0)$，真实类别 1，预测类别 1，损失 0.4076，属于“预测对了但不够自信”。第 2、3、5 个样本的损失都为 0.1698，`order()` 在并列时按原始下标稳定排序，所以 Top-3 取到 2、3；如果业务上要显示所有并列样本，应使用 `which(losses >= threshold)` 而不是固定取前 $k$ 个。第 4 个样本 logits $(0,0,5)$、真实类别 3，损失只有 0.0134，是“正确且自信”的样本，不应出现在高损失列表里。
+
+:::
+
+### 练习 5：实现 Grad-CAM 并做形状审计
+
+Grad-CAM 的核心公式为
+
+$$
+w_k^c=\frac1{Z}\sum_{i=1}^{H}\sum_{j=1}^{W}
+\frac{\partial y^c}{\partial A_{ij}^k},
+\qquad
+L^c=\mathrm{ReLU}\Bigl(\sum_{k=1}^{K}w_k^c A^k\Bigr),
+$$
+
+其中 $A^k\in\mathbb R^{H\times W}$ 是目标卷积层的第 $k$ 个特征图，$y^c$ 是类别 $c$ 的分数，$Z=HW$。
+
+- （a） 解释 $w_k^c$ 为什么是“梯度在空间维度上的平均”，以及为什么最后要过 ReLU、再上采样到原图大小。
+- （b） 实现一个 `SpyModule`，把它替换进一个玩具 CNN 的目标卷积层，完成前向、`retain_grad()`、one-hot 反传、计算 CAM，并打印各张量的形状。
+- （c） 对下面的特征图与梯度（$K=3$，$H=W=2$）手算权重和 CAM，再按最大值归一化：
+
+```text
+A(1) = [[1, 2],      grad(1) = [[1, 1],
+        [3, 4]]                [1, 1]]
+A(2) = [[2, 1],      grad(2) = [[0, 0],
+        [0, 1]]                [1, 0]]
+A(3) = [[0, 1],      grad(3) = [[1, 0],
+        [1, 0]]                [0, 1]]
+```
+
+- （d） 解释 `retain_grad()` 的必要性；说明本章脚本在 `nnf_relu(cam)` 之后按最大值归一化到 [0,1] 会丢失什么信息。
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a） 对类别 $c$ 的分数 $y^c$ 求梯度，$\partial y^c/\partial A_{ij}^k$ 表示“把特征图第 $k$ 个通道、位置 $(i,j)$ 的激活增加一点，类别分数会变多少”。对整个空间求平均得到 $w_k^c$，把它当作第 $k$ 个通道对类别 $c$ 的“重要性权重”。然后对每个通道做加权求和 $\sum_k w_k^c A^k$，得到一张与特征图同尺寸的热力图；ReLU 去掉负值，因为只有“支持该类别”的证据才应被高亮，抑制类别的负证据不显示；最后用双线性/双三次插值上采样到原图尺寸，才能叠加到输入图像上。Grad-CAM 的分辨率受目标卷积层限制（ResNet18 的 `layer4` 输出是 $7\times7$），上采样只是可视化，不会创造新的定位精度。
+
+（b） 下面是一个可运行的玩具实现（CPU 即可）：
+
+```r
+library(torch)
+
+SpyModule <- nn_module(
+  "SpyModule",
+  initialize = function(original_layer) {
+    self$layer <- original_layer
+    self$stored_features <- NULL
+  },
+  forward = function(x) {
+    out <- self$layer(x)
+    self$stored_features <- out
+    out
+  }
+)
+
+Block <- nn_module(
+  "Block",
+  initialize = function() {
+    self$conv1 <- nn_conv2d(3, 8, 3, padding = 1)
+    self$conv2 <- nn_conv2d(8, 8, 3, padding = 1)
+  },
+  forward = function(x) {
+    x <- nnf_relu(self$conv1(x))
+    self$conv2(x)
+  }
+)
+
+ToyNet <- nn_module(
+  "ToyNet",
+  initialize = function() {
+    self$layer4 <- nn_sequential(nn_relu(), Block())
+    self$head <- nn_linear(8, 2)
+  },
+  forward = function(x) {
+    x <- self$layer4(x)
+    x <- torch_mean(x, dim = c(3, 4))  # 全局平均池化
+    self$head(x)
+  }
+)
+
+model <- ToyNet()
+model$eval()
+
+target_conv <- model$layer4[[2]]$children$conv2
+spy <- SpyModule(target_conv)
+model$layer4[[2]]$add_module("conv2", spy)
+
+input <- torch_randn(1, 3, 16, 16)
+output <- model(input)                 # [1, 2]
+pred_idx <- torch_argmax(output, dim = 2)$item()
+cat("pred_idx =", pred_idx, "\n")      # R torch 的 argmax 是 1-based
+
+spy$stored_features$retain_grad()
+model$zero_grad()
+one_hot <- torch_zeros_like(output)
+one_hot[1, pred_idx] <- 1
+output$backward(gradient = one_hot)
+
+features  <- spy$stored_features       # [1, 8, 16, 16]
+gradients <- spy$stored_features$grad  # [1, 8, 16, 16]
+
+weights <- torch_mean(gradients, dim = c(3, 4), keepdim = TRUE)  # [1, 8, 1, 1]
+cam <- torch_sum(weights * features, dim = 2, keepdim = TRUE)    # [1, 1, 16, 16]
+cam <- nnf_relu(cam)
+cam <- cam / (torch_max(cam) + 1e-8)
+
+cat("features:", paste(features$shape, collapse = "x"), "\n")
+cat("gradients:", paste(gradients$shape, collapse = "x"), "\n")
+cat("cam:", paste(cam$shape, collapse = "x"), "\n")
+```
+
+要点：`torch_mean(..., dim = c(3, 4))` 在 R 中表示对第 3、4 维（即 $H,W$）求平均，`dim = 2` 是对通道维求和；R torch 的维度是 1-based，和 Python 的 0-based 写法不同。`add_module("conv2", spy)` 会替换同名子模块；`SpyModule` 内部保存原卷积层，前向时先调用它，再把输出存到 `stored_features`。
+
+（c） 三个通道的梯度均值为
+
+$$
+w_1=\frac{1+1+1+1}{4}=1,\qquad
+w_2=\frac{0+0+1+0}{4}=0.25,\qquad
+w_3=\frac{1+0+0+1}{4}=0.5.
+$$
+
+加权求和：
+
+$$
+\sum_k w_k A^k
+=
+\begin{bmatrix}
+1.5 & 2.75\\
+3.5 & 4.25
+\end{bmatrix}.
+$$
+
+ReLU 后不变；按最大值 4.25 归一化：
+
+$$
+\begin{bmatrix}
+0.3529 & 0.6471\\
+0.8235 & 1.0000
+\end{bmatrix}.
+$$
+
+对应的 R 代码如下：
+
+```r
+library(torch)
+A <- torch_tensor(matrix(c(
+  1, 2, 3, 4,    # 通道 1
+  2, 1, 0, 1,    # 通道 2
+  0, 1, 1, 0     # 通道 3
+), nrow = 3, byrow = TRUE))$view(c(1, 3, 2, 2))
+
+G <- torch_tensor(matrix(c(
+  1, 1, 1, 1,
+  0, 0, 1, 0,
+  1, 0, 0, 1
+), nrow = 3, byrow = TRUE))$view(c(1, 3, 2, 2))
+
+w <- torch_mean(G, dim = c(3, 4), keepdim = TRUE)
+cam <- torch_sum(w * A, dim = 2, keepdim = TRUE)
+cam <- nnf_relu(cam)
+cam / (torch_max(cam) + 1e-8)
+```
+
+（d） 中间张量默认不是叶子节点，反向传播后梯度不会被保留；`retain_grad()` 注册一个钩子，让这个非叶子张量也保存 `.grad`。如果只写 `requires_grad_(TRUE)` 而不写 `retain_grad()`，在 PyTorch 中对非叶子张量调用 `requires_grad_()` 还会直接报错；在 R torch 0.17 中它虽能执行，但真正起作用的是 `retain_grad()`，所以这一行至少是冗余的，移植到 Python 时则是错误的。
+
+`cam <- cam / (torch_max(cam) + 1e-8)` 把当前 CAM 的最大值强制拉到 1，这只适合可视化：无论原始响应多弱，最强像素都会变成“红色”，因此不同样本之间的绝对强度不可比较。
+
+:::
+
+### 练习 6：温度缩放与 MC Dropout
+
+- （a） 对二分类 logits $z=(1,2)$ 和 $z=(10,20)$，分别计算 $T=1$ 时的 softmax。说明为什么“最大 softmax 概率”不能直接当作置信度；并验证对任意 $T>0$，argmax 不变。
+- （b） 温度缩放只在验证集上学习一个标量 $T$，冻结所有网络权重，最小化验证集 NLL：
+
+$$
+T^\star=\arg\min_{T>0}\left[-\frac1n\sum_{i=1}^{n}
+\log\frac{\exp(z_{i,y_i}/T)}{\sum_k\exp(z_{ik}/T)}\right].
+$$
+
+用下面的合成验证集（80 个样本真实类别 1、20 个样本真实类别 2，所有 logits 都是 $(4,0)$）求 $T^\star$、对应的 NLL，以及 $T^\star$ 下正确类的概率。解释为什么 $T^\star>1$。
+
+```r
+z <- rbind(matrix(c(4, 0), nrow = 80, ncol = 2, byrow = TRUE),
+           matrix(c(4, 0), nrow = 20, ncol = 2, byrow = TRUE))
+y <- c(rep(1, 80), rep(2, 20))
+```
+
+- （c） 复现 `code/15_mc_dropout.R` 的 MC Dropout：训练集 $x\in[-4,4]$，测试集扩展到 $[-7,7]$，推理时保持 `net$train()`，做 100 次前向，计算每个测试点的均值和标准差。报告训练范围内、范围外的平均标准差，并解释“OOD 区域置信带张开”的含义。
+- （d） 如果网络中含有 BatchNorm，直接 `net$train()` 做 MC Dropout 会有什么副作用？给出一种更安全的实现思路。
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a） $T=1$ 时，
+
+$$
+\mathrm{softmax}(1,2)=\left(\frac{e}{e+e^2},\frac{e^2}{e+e^2}\right)
+=(0.2689,\ 0.7311),
+$$
+
+$$
+\mathrm{softmax}(10,20)=\left(4.539\times10^{-5},\ 0.9999546\right).
+$$
+
+两者的 argmax 都是第二类，但后者看起来“99.995% 确定”。这个 0.99995 只说明 logits 的绝对尺度大，不说明模型掌握了更多泛化知识；过拟合、缺少正则化或分布外输入都可能让 logits 被等比例放大。对任意 $T>0$，$z_i/T$ 与 $z_i$ 的大小顺序完全相同，所以 argmax 不变；温度只改变概率分布的尖锐程度。
+
+（b） 运行：
+
+```r
+softmax_T <- function(z, T = 1) {
+  e <- exp(z / T)
+  e / rowSums(e)
+}
+nll_T <- function(T, z, y) {
+  p <- softmax_T(z, T)
+  -mean(log(p[cbind(seq_len(nrow(p)), y)]))
+}
+
+z <- rbind(matrix(c(4, 0), nrow = 80, ncol = 2, byrow = TRUE),
+           matrix(c(4, 0), nrow = 20, ncol = 2, byrow = TRUE))
+y <- c(rep(1, 80), rep(2, 20))
+
+opt <- optimize(function(T) nll_T(T, z, y), interval = c(1e-2, 1e3))
+opt$minimum   # 2.8854
+opt$objective # 0.5004
+softmax_T(matrix(c(4, 0), nrow = 1), opt$minimum)
+# 0.8000 0.2000
+```
+
+$T=1$ 时 NLL 为
+
+$$
+-\frac1{100}\left[80\log(0.9820)+20\log(0.0180)\right]
+=0.8181,
+$$
+
+而 $T^\star\approx2.885$ 时 NLL 降到 0.5004，正确类概率从 0.9820 降到 0.8000。这个合成验证集的真实准确率就是 80%，所以校准后的“80% 概率”正好对应“80% 的样本正确”。$T^\star>1$ 是因为原模型在 20 个错误样本上给出了 0.982 的过高置信度，NLL 对“错误且自信”惩罚极重；把分布压平可以降低这部分损失。注意温度缩放不会改变 argmax，因此不会改变 accuracy，只改变概率校准。
+
+（c） 运行脚本（固定 `set.seed(42)`、`torch_manual_seed(42)`）可得到近似结果：
+
+```text
+训练范围内（|x| <= 4）平均标准差：约 0.219
+训练范围外（|x| > 4）平均标准差：约 1.156
+x = -7 处：均值约 -10.49，标准差约 1.87
+x =  7 处：均值约 -9.37，标准差约 1.66
+最大标准差：约 2.07（出现在 x 约 -6.86）
+```
+
+训练区间内，不同的 Dropout 子网络对同一输入给出几乎相同的预测，说明模型“见过”这些区域；一旦进入 $[-7,7]$ 中训练集未覆盖的部分，各子网络的预测开始分叉，标准差显著上升。置信带张开是认知不确定性（epistemic uncertainty）的可视化信号：模型不是“知道自己不知道”，而是不同的残缺网络给出了互相矛盾的答案。注意这里的均值本身也可能非常离谱（例如 $x=-7$ 的真实函数值约为 4.66，模型均值却是 -10.49），所以“平均值”在 OOD 区域并不可信，只有“不确定性高”这个信号是可靠的。
+
+（d） `net$train()` 不仅打开 Dropout，还会让 BatchNorm 使用当前 batch 的统计量并更新 running mean/var。推理时如果 batch size 很小或输入是 OOD，BN 的 batch 统计量会剧烈波动，MC Dropout 的方差里就混入了 BN 的噪声，不再是对“权重后验”的采样。更安全的做法是：只把 Dropout 模块设为训练模式，其它模块（尤其是 BN）保持 `eval()`；或者使用专门的 `MCDropout` 包装层，在推理时只激活 Dropout。可以在前向之前遍历 `net$modules`，对 `nn_dropout`/`nn_dropout2d` 调用 `$train()`，对 `nn_batch_norm` 调用 `$eval()`。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：解释的忠实性、捷径学习与不确定性的边界
+
+任选下面两个方向，写一篇 400–600 字的分析（可以配一个实验设计，不必真的训练大模型）：
+
+- （a）解释的忠实性：Grad-CAM、Input×Gradient、SHAP 都能画出“看起来合理”的解释，但“合理”不等于“忠实”。设计一个扰动实验，检验“被解释方法标记为重要的像素/特征，移除后预测是否真的按预期下降”。讨论 deletion/insertion、随机基线、模型参数随机化等 sanity check 的作用。
+- （b）捷径学习：正文提到皮肤癌模型可能在看“尺子”。如果让你在没有像素级标注的情况下排查这类捷径，你会怎样组合错误分析、Grad-CAM、背景替换、分组评测和反事实样本？说明每种方法能发现什么、不能发现什么。
+- （c）SHAP 的边界：SHAP 的“公平性”来自公理，但它在特征相关、采样近似、模型不可加（强交互）时仍有争议。讨论“SHAP 值加起来等于预测值”这一可加性在什么条件下成立，以及为什么 TreeSHAP/KernelSHAP 的近似误差可能让局部解释不稳定。
+- （d）不确定性的工程取舍：温度缩放、MC Dropout、深度集成（deep ensemble）各自捕捉什么不确定性？在医疗、自动驾驶、金融风控中，你会怎样选择校准方法，并把“置信度”转成“拒识/人工复核”的策略？
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+以下答案给出评分要点，不要求逐字一致。
+
+（a）忠实性。 一个解释方法可以是“稳定的”（换种子不变）、“合理的”（高亮区域像目标物体），但仍然不忠实：模型可能根本没有依赖这些特征。检验思路是“解释 → 干预 → 预测变化”：
+
+1. 用解释方法给每个像素/特征打分，按分数从高到低逐步删除（deletion），记录模型对正确类别的概率下降曲线；同时用随机删除作为基线。忠实的方法应比随机删除下降更快。
+2. 反过来做 insertion：从全模糊/全零图像开始，按解释分数从高到低逐步恢复像素，记录概率上升曲线；忠实的方法应比随机恢复上升更快。
+3. 做 model parameter randomization sanity check：把模型权重随机化后，如果解释图仍然“像物体”，说明该方法主要反映输入图像的视觉结构，而不是模型学到的决策依据。
+4. 对表格数据，可以固定背景数据、只替换被标记为重要的特征，观察预测是否按归因方向移动；若移动方向与归因符号相反，解释就不可信。
+
+注意 deletion/insertion 也有陷阱：删除像素会制造 OOD 输入，模型可能因为“看到不自然的图像”而改变预测，而不只是因为缺少关键证据；因此要同时报告随机基线、多种删除策略（模糊、均值填充、遮挡块）和置信区间。
+
+（b）捷径学习。 一个可操作的排查组合：
+
+- 错误分析：先看高损失样本和分组指标（按医院、设备、肤色、图像来源分组）。如果某组的召回率异常低，可能提示背景/设备捷径。
+- Grad-CAM：检查热力图是否落在病灶以外的区域（尺子、标记、边框、背景纹理）。它只能提供“相关性”线索，不能证明因果。
+- 背景替换/前景遮挡：把病灶区域保留、背景替换成其它医院的背景，或者只遮挡背景，观察预测是否翻转；这是比热力图更强的干预证据。
+- 反事实样本：对同一张图做“去掉尺子”的编辑（如果可行），看预测是否从恶性变良性；或者收集“有尺子但良性”的对照图。
+- 分组评测与外部验证：在未见过的新医院/新设备上测，若性能骤降，说明模型依赖了训练环境特有的捷径。
+
+Grad-CAM 不能发现“模型用了热力图之外的全局统计量”（例如图像整体亮度、JPEG 压缩痕迹）；错误分析也不能证明因果。最有力的证据来自受控干预和外部分布测试。
+
+（c）SHAP 的边界。 可加性 $\sum_i\phi_i=f(x)-E[f(X)]$ 来自 Shapley 的效率公理，它对精确 Shapley 值成立；但前提是价值函数 $v(S)$ 定义良好，且所有 $2^N$ 个子集都能被评估。现实中使用 KernelSHAP/TreeSHAP 时：
+
+- 特征相关会破坏“缺失特征”的语义：把某个特征“移除”时，是用训练分布边缘化、条件化，还是填一个基线值？不同选择给出不同的 $v(S)$，也给出不同的 SHAP 值。
+- KernelSHAP 用加权线性回归近似，采样数有限时局部解释会波动；TreeSHAP 对树模型可以是精确的，但把树模型换成 MLP 后不再适用。
+- 强交互下，SHAP 仍能分配贡献，但“把某个特征移除”本身没有唯一现实含义；两个相关特征的贡献可能互相抵消，导致局部解释看起来反直觉。
+
+因此，“SHAP 加起来等于预测值”只在精确计算且价值函数一致时严格成立；工程上应报告采样方差、换背景数据做敏感性分析，并避免把 SHAP 值当成因果效应。
+
+（d）不确定性的工程取舍。 温度缩放主要校准 aleatoric + epistemic 混合后的输出概率，它不区分来源，也不能识别 OOD；MC Dropout 近似权重后验，能给出 epistemic 不确定性，但依赖 Dropout 结构和训练方式；深度集成训练多个独立模型，通常校准和 OOD 检测更可靠，但成本最高。医疗场景可以把“低置信度 + 高 MC 方差”作为拒识/人工复核触发条件，并用独立校准集选阈值；自动驾驶更关注 OOD 检测和实时性，可能用 MC Dropout 或轻量集成；金融风控需要可审计的校准报告，温度缩放 + 分组校准（按客群/时间段）通常更实用。关键不是“哪个方法最好”，而是明确要检测的是分布内校准还是分布外认知不确定性，并用对应的评测集验证。
+
+:::
+
+---
+
+## 进一步练习（可选）
+
+- 把练习 4 的 `top_losses()` 扩展到返回每个高损失样本的真实标签、预测标签和置信度，并按“错误且高置信”“正确但低置信”分组统计。
+- 把练习 5 的玩具网络换成 `torchvision::model_resnet18(pretrained = TRUE)`，分别截获 `layer3` 和 `layer4` 的 `conv2`，比较热力图的空间分辨率与语义层次。
+- 把练习 6 的温度缩放应用到第 7 章的 CIFAR-10 模型：在验证集上学 $T$，在测试集上报告 ECE（期望校准误差）从多少降到多少，并画出 reliability diagram。

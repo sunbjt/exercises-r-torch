@@ -1,0 +1,865 @@
+# 09 Transformer {.unnumbered}
+
+本章从缩放点积注意力出发，依次讨论多头注意力、位置编码、残差与 LayerNorm、原生 Transformer 编码器、表格数据上的 Token 化与 `[CLS]`、GPT 式的自回归生成，以及 LoRA 微调。下面 8 道题按四类编排：
+
+- 概念与推导（练习 1–3）：注意力的形状与复杂度、缩放为什么能稳定 softmax、多头注意力的参数量与头拆分、位置编码与置换等变性。
+- 编程实践（练习 4–6）：手写多头注意力并与 `nn_multihead_attention` 对齐、因果掩码与温度采样、QuerySuggestGPT 与 LoRA 的参数量核算。
+- 开放思考（练习 7）：表格 Transformer 与 MLP 的取舍、`[CLS]` 注意力的可解释性边界、ALiBi 外推与 LoRA 的容量权衡。
+- 纠错与陷阱（练习 8）：R 与 Python 的 `unsqueeze`/embedding 索引差异、logits 切片、掩码方向与 LoRA 初始化。
+
+建议用时约 4 小时。练习 1、2、4、8 可以先做；练习 3 的证明和练习 5 的掩码实验建议配合 `torch` 实际跑一遍。答案中的数值在 R 4.6.1、torch 0.17.0 下核对过，固定种子后你的结果应当接近；凡是写“约”的地方，不必逐位对齐。
+
+## 一、概念与推导
+
+### 练习 1：缩放点积注意力的形状、复杂度与缩放
+
+考虑批量大小 $B=8$、查询长度 $T=512$、键/值长度 $S=512$、键维度 $d_k=64$、值维度 $d_v=64$ 的缩放点积注意力：
+
+$$
+\operatorname{Attention}(Q,K,V)
+=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
+$$
+
+请回答：
+
+- （a） 设 $Q\in\mathbb{R}^{B\times T\times d_k}$，$K\in\mathbb{R}^{B\times S\times d_k}$，$V\in\mathbb{R}^{B\times S\times d_v}$。写出 scores、注意力权重和输出的形状；时间复杂度和显存复杂度各是多少？
+- （b） 对上面的具体数值，scores 有多少个元素？用 float32 存储需要多少 MiB？只计算 $QK^\top$ 大约需要多少次浮点运算（按一次乘加算 2 FLOPs）？
+- （c） 假设 $q_i,k_i$ 独立同分布，均值为 0、方差为 1。证明点积 $q\cdot k=\sum_{i=1}^{d_k}q_i k_i$ 的方差是 $d_k$，因此除以 $\sqrt{d_k}$ 后方差约为 1。用 R 模拟 $d_k=64$ 验证。
+- （d） 若 $d_k=512$ 且不做缩放，logits 的标准差大约是多少？这会让 softmax 和它的雅可比矩阵发生什么？为什么说“梯度消失”在这里不是由于激活函数，而是由于 softmax 饱和？
+- （e） 为什么说注意力的计算和显存对序列长度是二次的？当 $T$ 从 512 增加到 4096 时，scores 的元素个数和显存各变成多少倍？列出至少一种降低长序列开销的思路。
+
+:::{.callout-note collapse="true"}
+
+# 练习 1 参考答案
+
+（a）形状与复杂度。
+
+| 量 | 形状 |
+| :--- | :--- |
+| $Q$ | $[B,T,d_k]$ |
+| $K,V$ | $[B,S,d_k]$、$[B,S,d_v]$ |
+| $QK^\top$ / scores / 权重 | $[B,T,S]$ |
+| 输出 | $[B,T,d_v]$ |
+
+计算 $QK^\top$ 需要 $O(BTSd_k)$ 时间，加权求和 $AV$ 需要 $O(BTSd_v)$，合起来常写成 $O(BTSd)$。显存的主要项是 scores/attention 矩阵 $[B,T,S]$，即 $O(BTS)$；此外还有 $Q,K,V$ 和输出，合计仍是 $O(B(T+S)d+BTS)$。
+
+（b）具体数值。
+
+scores 元素数：
+
+$$
+BTS=8\times512\times512=2{,}097{,}152.
+$$
+
+float32 每个元素 4 字节：
+
+$$
+2{,}097{,}152\times4=8{,}388{,}608\text{ bytes}=8\text{ MiB}.
+$$
+
+$QK^\top$ 的乘加次数为 $BTSd_k$，按 2 FLOPs/乘加：
+
+$$
+2BTSd_k=2\times8\times512\times512\times64
+=268{,}435{,}456\approx2.68\times10^8\ \text{FLOPs}.
+$$
+
+$AV$ 的计算量同量级（把 $d_k$ 换成 $d_v$），所以两项合计约 $5.37\times10^8$ FLOPs。
+
+（c）缩放方差的推导。
+
+令 $q_i,k_i$ 独立、均值 0、方差 1，则
+
+$$
+\mathbb{E}[q_i k_i]=\mathbb{E}[q_i]\mathbb{E}[k_i]=0,
+$$
+
+$$
+\operatorname{Var}(q_i k_i)
+=\mathbb{E}[q_i^2k_i^2]-\left(\mathbb{E}[q_i k_i]\right)^2
+=\mathbb{E}[q_i^2]\mathbb{E}[k_i^2]=1.
+$$
+
+不同 $i$ 的乘积互相独立，所以
+
+$$
+\operatorname{Var}\left(\sum_{i=1}^{d_k}q_i k_i\right)
+=\sum_{i=1}^{d_k}\operatorname{Var}(q_i k_i)=d_k.
+$$
+
+除以 $\sqrt{d_k}$ 后，方差变为 $d_k/(\sqrt{d_k})^2=1$。R 模拟（`set.seed(123)`，20 万个样本）得到：
+
+```r
+d <- 64
+q <- torch_randn(200000, d)
+k <- torch_randn(200000, d)
+dot <- (q * k)$sum(dim = 2)
+as.numeric(dot$var())              # 63.80851
+as.numeric((dot / sqrt(d))$var())  # 0.9970079
+```
+
+（d）不缩放时的 softmax 饱和。
+
+$d_k=512$ 时点积的标准差约为 $\sqrt{512}\approx22.6$。若每一行有 512 个 key，最大 logit 与其余 logit 的差距会被放大到几十，softmax 几乎变成 one-hot：最大值接近 1，其余接近 0。
+
+softmax 对 logits $z$ 的雅可比是
+
+$$
+\frac{\partial p}{\partial z}
+=\operatorname{diag}(p)-pp^\top.
+$$
+
+当 $p$ 接近 one-hot 时，$p_i(1-p_i)\approx0$，梯度几乎为零；同时，稍微改变输入就可能让 argmax 翻转，训练很不稳定。除以 $\sqrt{d_k}$ 把 logits 的尺度拉回 $O(1)$，让 softmax 工作在梯度较健康的区间。这里的饱和来自 softmax，不是 ReLU/Sigmoid 的饱和。
+
+（e）二次复杂度与外推。
+
+scores 矩阵有 $BTS$ 个元素。自注意力通常 $T=S$，所以时间和显存都随 $T^2$ 增长。$T$ 从 512 增到 4096 是 8 倍，scores 元素数变成 $8^2=64$ 倍；对 $B=8$ 的 float32 scores，显存从 8 MiB 增到：
+
+$$
+8\times4096\times4096\times4
+=536{,}870{,}912\text{ bytes}=512\text{ MiB}.
+$$
+
+这还没有算反向传播保存的中间量。常见缓解思路包括：局部/滑动窗口注意力、稀疏注意力、低秩或核近似（如 Linformer）、以及 FlashAttention 这类通过分块和重计算降低显存占用的实现（它通常不改变 $O(T^2)$ 的渐进复杂度，但显著减少实际显存访问）。此外，长序列任务也可以先做池化、分块或使用层次化注意力。
+
+:::
+
+### 练习 2：多头注意力的参数量与头拆分
+
+考虑书中手写的 `MultiHeadAttention`，以及 R torch 原生的 `nn_multihead_attention`。设模型维度 $D=64$，头数 $h=8$，每个头维度 $d_h=D/h=8$。
+
+请回答：
+
+- （a） `nn_multihead_attention(embed_dim = 64, num_heads = 8, bias = TRUE)` 有多少参数？请按 `in_proj_weight`、`in_proj_bias`、`out_proj.weight`、`out_proj.bias` 拆开。若 `bias = FALSE` 呢？
+- （b） 手写版把 $Q,K,V$ 从 $[B,T,D]$ 变成 $[B,h,T,d_h]$，用了 `view(c(B,T,h,d_h))` 和 `transpose(2,3)`。写出每一步的形状；为什么拼接前需要 `contiguous()`？
+- （c） 把 $h$ 从 1 改成 8，参数量会变成 8 倍吗？多头到底增加了什么、又没有增加什么？若 $D$ 不能被 $h$ 整除会发生什么？
+- （d） `nn_transformer_encoder_layer(d_model = 64, nhead = 4, dim_feedforward = 256)` 有多少参数？拆成多头注意力、FFN、两个 LayerNorm 三部分。若把 $D$ 换成 256、`dim_feedforward` 仍为 256（书中 GPT 的配置），每层参数量是多少？若采用常见的 `dim_feedforward = 4D = 1024`，FFN 部分又是多少？
+
+:::{.callout-note collapse="true"}
+
+# 练习 2 参考答案
+
+（a）原生多头注意力的参数。
+
+R torch 把 $Q,K,V$ 的投影合并成一个 `in_proj_weight`，形状为 $[3D,D]$，偏置为 $[3D]$；输出投影是普通的 `nn_linear(D,D)`。
+
+| 参数 | 形状 | 数量 |
+| :--- | :--- | ---: |
+| `in_proj_weight` | $[3D,D]=[192,64]$ | $3D^2=12{,}288$ |
+| `in_proj_bias` | $[3D]=[192]$ | $3D=192$ |
+| `out_proj.weight` | $[D,D]=[64,64]$ | $D^2=4{,}096$ |
+| `out_proj.bias` | $[D]=[64]$ | $D=64$ |
+| 合计 | | 16,640 |
+
+带偏置时
+
+$$
+3D^2+3D+D^2+D=4D^2+4D=4(D^2+D)=16{,}640.
+$$
+
+`bias = FALSE` 时只剩 $4D^2=16{,}384$。R 中可直接核对：
+
+```r
+mha <- nn_multihead_attention(64, 8, bias = TRUE, batch_first = TRUE)
+sum(vapply(mha$parameters, function(p) p$numel(), integer(1)))  # 16640
+```
+
+（b）头拆分的形状。
+
+```text
+Q: [B,T,D]
+Q$view(c(B,T,h,d_h)):        [B,T,h,d_h]
+Q$transpose(2,3):            [B,h,T,d_h]
+K$transpose(3,4):            [B,h,d_h,S]
+scores = Q %*% K^T:          [B,h,T,S]
+softmax(dim=4):              [B,h,T,S]
+context = weights %*% V:     [B,h,T,d_h]
+context$transpose(2,3):      [B,T,h,d_h]
+context$contiguous()$view:   [B,T,D]
+```
+
+`transpose()` 只交换 stride，不复制数据，所以转置后的张量通常不是连续存储的；`view()` 要求底层内存连续，否则会报错或得到错误的元素顺序。`contiguous()` 先按当前逻辑顺序复制成连续内存，再 `view` 成 $[B,T,D]$。书中在 `transpose(2,3)` 后调用 `contiguous()`，就是为了安全地拼接各头。
+
+（c）多头是否增加参数。
+
+不会。无论 $h=1$ 还是 $h=8$，$Q,K,V$ 的投影合计都是 $3D^2$（加偏置 $3D$），输出投影是 $D^2+D$。多头只是把同一个 $D$ 维空间切成 $h$ 个 $d_h$ 维子空间，让每个头独立计算注意力，再把结果拼回来。它增加的是注意力矩阵的数量（$h$ 个 $T\times S$ 矩阵）和 softmax 的调用次数，不是投影参数量。
+
+若 $D$ 不能被 $h$ 整除，`d_h = D/h` 不是整数，`view(c(B,T,h,d_h))` 无法把 $D$ 个元素平均分给 $h$ 个头，书中因此用 `stop("embed_dim 必须能被 num_heads 整除！")` 提前检查。
+
+（d）编码器层的参数。
+
+$D=64$、`nhead=4`、`dim_feedforward=256`：
+
+| 子层 | 计算 | 数量 |
+| :--- | :--- | ---: |
+| 多头注意力 | $4(D^2+D)=4(64^2+64)$ | 16,640 |
+| FFN 第一层 $64\to256$ | $64\cdot256+256$ | 16,640 |
+| FFN 第二层 $256\to64$ | $256\cdot64+64$ | 16,448 |
+| 两个 LayerNorm | $2\times(2D)=4D$ | 256 |
+| 合计 | | 49,984 |
+
+注意 FFN 两层的偏置不对称：第一层输出 256 维，偏置 256 个；第二层输出 64 维，偏置 64 个。因此 FFN 是 $2D\cdot d_{ff}+d_{ff}+D$，不是简单的 $2(D^2+D)$，除非 $d_{ff}=D$。
+
+若 $D=256$、$d_{ff}=256$（书中 GPT 的配置）：
+
+$$
+\underbrace{4(256^2+256)}_{263{,}168}
++\underbrace{2(256\cdot256)+256+256}_{131{,}584}
++\underbrace{4\cdot256}_{1{,}024}
+=395{,}776.
+$$
+
+若采用常见的 $d_{ff}=4D=1024$：
+
+$$
+\text{FFN}=2\cdot256\cdot1024+1024+256=525{,}568,
+$$
+
+整层为 $263{,}168+525{,}568+1{,}024=789{,}760$。这也解释了为什么标准 Transformer 的 FFN 往往占每层参数的一半以上，而书中把 $d_{ff}$ 硬编码成 256 后，FFN 与注意力的参数量几乎相同。
+
+:::
+
+### 练习 3：位置编码与置换等变性
+
+纯自注意力对输入的顺序是“无感”的：如果打乱序列中的 token，输出只会跟着做同样的置换。请回答：
+
+- （a） 设 $P$ 是置换矩阵。证明（或说明）$\operatorname{Attention}(PX,PX,PX)=P\operatorname{Attention}(X,X,X)$。用 R 构造一个 $6\times8$ 的随机序列和置换，验证最大绝对误差。
+- （b） 为什么这种置换等变性对语言、时间序列是个问题？位置编码注入后，等变性为什么会被打破？
+- （c） 比较“把位置编码加到 token 表示上”和“把位置编码与 token 表示拼接后再投影”。写出形状、参数量和各自的优缺点。
+- （d） 正弦位置编码和可学习位置编码的公式/参数量有何不同？书中 GPT 的 `max_len=32`、`D=256`，可学习位置编码有多少参数？如果推理时序列超过 `max_len` 会怎样？
+- （e） 书中 `FullTransformer` 用 `torch_arange(1, seq_len)` 生成位置，而不是从 0 开始。为什么？如果改成从 0 开始，`nn_embedding(max_len)` 还能正常工作吗？
+
+:::{.callout-note collapse="true"}
+
+# 练习 3 参考答案
+
+（a）置换等变性。
+
+设 $P$ 是 $T\times T$ 的置换矩阵，$PX$ 表示按 $P$ 重排序列。则
+
+$$
+(PX)(PX)^\top=PXX^\top P^\top.
+$$
+
+对矩阵的每一行做 softmax，等价于先 softmax 再按行置换：
+
+$$
+\operatorname{softmax}_{\text{row}}(PXX^\top P^\top)
+=P\operatorname{softmax}_{\text{row}}(XX^\top)P^\top.
+$$
+
+最后乘以 $PV$：
+
+$$
+P\operatorname{softmax}(XX^\top)P^\top PV
+=P\operatorname{softmax}(XX^\top)V.
+$$
+
+所以输出确实跟着 $P$ 置换。R 验证（`torch_manual_seed(1)`）：
+
+```r
+Att <- function(x) {
+  d <- x$size(3)
+  w <- nnf_softmax(torch_matmul(x, x$transpose(2, 3)) / sqrt(d), dim = -1)
+  torch_matmul(w, x)
+}
+
+x <- torch_randn(1, 6, 8)
+perm <- torch_tensor(c(3L, 1L, 5L, 2L, 6L, 4L))
+y <- Att(x)
+y_perm <- Att(x[, perm, ])
+as.numeric((y[, perm, ] - y_perm)$abs()$max())
+# 约 2.4e-7（float32 舍入误差，可视为 0）
+```
+
+（b）为什么需要位置编码。
+
+如果没有位置编码，“狗咬人”和“人咬狗”对自注意力来说是同一个集合，只是 token 的顺序不同；模型无法区分主语和宾语，也无法区分“昨天”“今天”“明天”。位置编码把“第几个位置”变成输入的一部分，打破置换等变性。对时间序列，位置还承载了趋势、周期和滞后关系，缺少位置信息会直接损失预测能力。
+
+（c）加法 vs 拼接。
+
+| 方式 | 形状 | 额外参数 | 特点 |
+| :--- | :--- | :--- | :--- |
+| 加法 $X+PE$ | $[B,T,D]$ | 位置编码本身的参数（若可学习） | 简单、便宜；位置与内容共享同一子空间，可能相互干扰 |
+| 拼接 $[X;PE]$ 再投影 | $[B,T,D+D_p]\to[B,T,D]$ | 投影矩阵 $D(D+D_p)+D$ | 位置与内容有独立维度；多一个投影层，计算和参数更多 |
+
+书中采用加法：`x_emb + pos_embeddings`。这是 Transformer 原论文和 GPT 的常见做法。拼接在部分模型（如某些语音/视觉模型）中也会出现，但没有统一优劣，关键看位置信息与内容是否需要分离。
+
+（d）正弦 vs 可学习。
+
+正弦编码对位置 $pos$ 和维度索引 $i$：
+
+$$
+PE(pos,2i)=\sin\left(\frac{pos}{10000^{2i/D}}\right),\qquad
+PE(pos,2i+1)=\cos\left(\frac{pos}{10000^{2i/D}}\right).
+$$
+
+它没有可学习参数，理论上可以计算任意长的位置；不同频率的波长让模型能表示相对位移。可学习位置编码是一张 $[max\_len,D]$ 的表：
+
+$$
+\text{params}=max\_len\times D=32\times256=8{,}192.
+$$
+
+它更灵活，但只能索引 $1,\dots,max\_len$；推理时若序列长度超过 `max_len`，`nn_embedding` 会越界报错（或需要截断/插值/扩展表）。书中 `suggest_next` 用滑动窗口把上下文截到最近 32 个 token，就是为了不超过这个上限。
+
+（e）为什么从 1 开始。
+
+R torch 的 `nn_embedding` 采用 1-based 索引：索引 1 对应权重矩阵的第 1 行，索引 0 不是合法行（这一点与 Python PyTorch 的 0-based 约定不同）。因此 `torch_arange(1, seq_len)` 产生的位置 $1,\dots,seq\_len$ 正好覆盖 `nn_embedding(max_len)` 的前 $seq\_len$ 行。若改成从 0 开始，位置 0 会越界；若确实要用 0-based 位置，需要把 embedding 的行数设为 `max_len+1`，或把索引整体加 1。
+
+补充：加法位置编码确实打破等变性。 如果只打乱 $X$ 而保持位置编码 $PE$ 不变，输出不会跟着同样置换。用固定 `pe` 重跑上面的实验，`(y2[, perm, ] - Att(x[, perm, ] + pe))` 的最大差约为 4.38，而不是 $10^{-7}$。这正是位置编码起作用的证据。
+
+:::
+
+## 二、编程实践
+
+### 练习 4：手写多头注意力并与 `nn_multihead_attention` 对齐
+
+本练习的目标不是“能跑”，而是逐元素对齐：用四个独立的 `nn_linear` 手写多头注意力，把原生模块的权重拷贝进去，验证两者的输出完全一致。
+
+- （a） 补全下面的 `ManualMHA`，要求支持 `bias = TRUE/FALSE`，并返回输出张量。
+- （b） 取 $D=16,h=4,B=2,T=5$，从 `nn_multihead_attention(embed_dim=16, num_heads=4, bias=TRUE, batch_first=TRUE)` 拷贝 `in_proj_weight`、`in_proj_bias` 和 `out_proj`，比较两者输出的最大绝对误差。
+- （c） 用 `need_weights = TRUE, avg_weights = FALSE` 打印原生模块的注意力权重形状；检查每个头的每一行权重之和是否为 1。
+- （d） 解释为什么原生模块把 $Q,K,V$ 的投影合并成一个 $[3D,D]$ 的 `in_proj_weight`，而不是三个独立的 `nn_linear`。两种写法在数学上等价吗？在计算效率上有什么差别？
+- （e） 若 `bias = FALSE`，权重拷贝代码要改哪里？预期误差是多少？
+
+:::{.callout-note collapse="true"}
+
+# 练习 4 参考答案
+
+（a）手写实现。
+
+```r
+ManualMHA <- nn_module(
+  "ManualMHA",
+  initialize = function(D, H, bias = TRUE) {
+    self$D <- D
+    self$H <- H
+    self$dh <- D / H
+    self$Wq <- nn_linear(D, D, bias = bias)
+    self$Wk <- nn_linear(D, D, bias = bias)
+    self$Wv <- nn_linear(D, D, bias = bias)
+    self$Wo <- nn_linear(D, D, bias = bias)
+  },
+  forward = function(x) {
+    B <- x$size(1)
+    T <- x$size(2)
+
+    q <- self$Wq(x)
+    k <- self$Wk(x)
+    v <- self$Wv(x)
+
+    q <- q$view(c(B, T, self$H, self$dh))$transpose(2, 3)
+    k <- k$view(c(B, T, self$H, self$dh))$transpose(2, 3)
+    v <- v$view(c(B, T, self$H, self$dh))$transpose(2, 3)
+
+    scores <- torch_matmul(q, k$transpose(3, 4)) / sqrt(self$dh)
+    weights <- nnf_softmax(scores, dim = 4)
+    context <- torch_matmul(weights, v)
+
+    context <- context$transpose(2, 3)$contiguous()$view(c(B, T, self$D))
+    self$Wo(context)
+  }
+)
+```
+
+（b）权重拷贝与对齐。
+
+```r
+torch_manual_seed(1)
+D <- 16
+H <- 4
+B <- 2
+T <- 5
+x <- torch_randn(B, T, D)
+
+native <- nn_multihead_attention(
+  embed_dim = D, num_heads = H, bias = TRUE, batch_first = TRUE
+)
+manual <- ManualMHA(D, H, bias = TRUE)
+
+with_no_grad({
+  W <- native$in_proj_weight       # [3D, D]
+  b <- native$in_proj_bias         # [3D]
+
+  manual$Wq$weight$copy_(W[1:D, ])
+  manual$Wq$bias$copy_(b[1:D])
+
+  manual$Wk$weight$copy_(W[(D + 1):(2 * D), ])
+  manual$Wk$bias$copy_(b[(D + 1):(2 * D)])
+
+  manual$Wv$weight$copy_(W[(2 * D + 1):(3 * D), ])
+  manual$Wv$bias$copy_(b[(2 * D + 1):(3 * D)])
+
+  manual$Wo$weight$copy_(native$out_proj$weight)
+  manual$Wo$bias$copy_(native$out_proj$bias)
+})
+
+out_native <- native(x, x, x)[[1]]
+out_manual <- manual(x)
+
+cat("native:", paste(out_native$shape, collapse = "x"), "\n")
+cat("manual:", paste(out_manual$shape, collapse = "x"), "\n")
+cat("max diff:", as.numeric((out_native - out_manual)$abs()$max()), "\n")
+```
+
+参考输出：
+
+```text
+native: 2x5x16
+manual: 2x5x16
+max diff: 0
+```
+
+误差为 0 说明两件事：第一，`in_proj_weight` 的行按 $[W_Q;W_K;W_V]$ 排列；第二，手写版的 `view -> transpose -> softmax -> transpose -> contiguous -> view` 与原生实现完全一致。
+
+（c）注意力权重。
+
+```r
+res <- native(x, x, x, need_weights = TRUE, avg_weights = FALSE)
+cat("weights:", paste(res[[2]]$shape, collapse = "x"), "\n")
+# 2x4x5x5
+sum(res[[2]][1, 1, 1, ])  # 1
+```
+
+`avg_weights = FALSE` 时返回每个头的权重，形状 $[B,h,T,T]$；默认 `avg_weights = TRUE` 时会把头平均掉，返回 $[B,T,T]$。每一行经过 softmax，和应为 1（float32 下可能略有舍入）。
+
+（d）合并投影的等价性与效率。
+
+数学上，
+
+$$
+Q=XW_Q,\quad K=XW_K,\quad V=XW_V
+$$
+
+等价于先拼接权重
+
+$$
+W_{QKV}=\begin{bmatrix}W_Q\\W_K\\W_V\end{bmatrix}\in\mathbb{R}^{3D\times D},
+$$
+
+再做一次矩阵乘法 $XW_{QKV}$，然后把结果的最后维切成三段。原生模块正是这样存储的：`in_proj_weight` 的前 $D$ 行是 $W_Q$，中间 $D$ 行是 $W_K$，最后 $D$ 行是 $W_V$。
+
+工程上，一次 $[B T,D]\times[D,3D]$ 的矩阵乘法比三次独立的 $[B T,D]\times[D,D]$ 更容易并行、内存访问更连续；但两者的浮点运算量和参数量相同。手写版用三个 `nn_linear` 更直观，便于分别初始化或加不同的正则；原生版更适合生产。
+
+（e）无偏置时。
+
+`bias = FALSE` 时，`native$in_proj_bias` 为 `NULL`，`manual$Wq$bias` 等也为 `NULL`。拷贝代码只需保留四个 `weight$copy_()`，删掉所有 `bias$copy_()`：
+
+```r
+with_no_grad({
+  W <- native$in_proj_weight
+  manual$Wq$weight$copy_(W[1:D, ])
+  manual$Wk$weight$copy_(W[(D + 1):(2 * D), ])
+  manual$Wv$weight$copy_(W[(2 * D + 1):(3 * D), ])
+  manual$Wo$weight$copy_(native$out_proj$weight)
+})
+```
+
+预期最大误差仍为 0（或 float32 舍入级别的 $10^{-7}$）。
+
+:::
+
+### 练习 5：因果掩码、下一词对齐与温度采样
+
+GPT 训练时把整句话一次性喂给模型，但第 $t$ 个位置只能看到 $1,\dots,t$，不能偷看未来。推理时又要按“前 $n$ 个词预测第 $n+1$ 个词”的方式逐词生成。
+
+- （a） 用 `torch_full(c(L,L), -Inf)` 和 `torch_triu(..., diagonal = 1)` 构造 $L=5$ 的因果掩码，打印矩阵。哪些位置是 0，哪些是 $-\infty$？为什么 0 表示“允许”、$-\infty$ 表示“屏蔽”？
+- （b） 用 `nn_multihead_attention` 做实验：固定前 5 个 token，只修改最后一个 token，比较第 1 个位置的输出。分别在不传掩码和传入上面的掩码时计算最大绝对差。解释结果。
+- （c） 设 `full_seq = c(10,20,30,40,1)`（这里 `1` 是 `<PAD>`，符合 R torch 的 1-based 索引）、`max_len = 4`。写出输入 `x` 和目标 `y`，并解释为什么第 $t$ 个位置的 logits 对应 `y[t]`。`ignore_index = pad_idx` 在这里起什么作用？
+- （d） 对 logits $z=(2,1,0)$，分别计算 $T=0.5,1,2$ 时的 softmax 概率。说明 $T\to0$ 和 $T\to\infty$ 的极限；为什么 $T>0$ 时温度不改变 argmax？`torch_multinomial` 和 `torch_argmax` 的区别是什么？
+
+:::{.callout-note collapse="true"}
+
+# 练习 5 参考答案
+
+（a）因果掩码。
+
+```r
+L <- 5
+mask <- torch_full(c(L, L), -Inf)
+mask <- torch_triu(mask, diagonal = 1)
+print(mask)
+```
+
+输出：
+
+```text
+      [,1]  [,2]  [,3]  [,4]  [,5]
+[1,]     0  -Inf  -Inf  -Inf  -Inf
+[2,]     0     0  -Inf  -Inf  -Inf
+[3,]     0     0     0  -Inf  -Inf
+[4,]     0     0     0     0  -Inf
+[5,]     0     0     0     0     0
+```
+
+`scores + mask` 后，上三角（严格高于对角线）的分数变成 $-\infty$，softmax 后权重为 0；下三角和对角线保持原分数，表示“第 $i$ 个位置可以看 $1,\dots,i$”。`diagonal = 1` 保留主对角线，因此每个位置能看到自己；若写成 `diagonal = 0`，连自己也会被屏蔽，通常不是因果语言模型想要的。
+
+（b）掩码是否真的阻止了未来信息。
+
+```r
+torch_manual_seed(1)
+x <- torch_randn(1, 6, 8)
+x2 <- x$clone()
+x2[1, 6, ] <- x2[1, 6, ] + 10   # 只改最后一个 token
+
+mha <- nn_multihead_attention(8, 2, dropout = 0, batch_first = TRUE)
+mask <- torch_triu(torch_full(c(6, 6), -Inf), diagonal = 1)
+
+o1 <- mha(x, x, x)[[1]]
+o2 <- mha(x2, x2, x2)[[1]]
+cat("no mask, pos 1 diff:",
+    as.numeric((o1[1, 1, ] - o2[1, 1, ])$abs()$max()), "\n")
+
+o1m <- mha(x, x, x, attn_mask = mask)[[1]]
+o2m <- mha(x2, x2, x2, attn_mask = mask)[[1]]
+cat("with mask, pos 1 diff:",
+    as.numeric((o1m[1, 1, ] - o2m[1, 1, ])$abs()$max()), "\n")
+cat("with mask, pos 6 diff:",
+    as.numeric((o1m[1, 6, ] - o2m[1, 6, ])$abs()$max()), "\n")
+```
+
+定性结果：不传掩码时，第 1 个位置也能通过自注意力“看到”最后一个 token，修改它会让第 1 个位置输出变化（固定种子下差值约 $0.28$）；传入因果掩码后，第 1 个位置只能看到自己，差值严格为 0；而第 6 个位置本来就能看到最后一个 token，所以差值仍然非零（固定种子下约 $6.45$）。这说明掩码的方向和 `diagonal` 都正确。
+
+（c）下一词对齐。
+
+```r
+full_seq <- c(10, 20, 30, 40, 1)
+max_l <- 4
+x <- full_seq[1:max_l]        # 10 20 30 40
+y <- full_seq[2:(max_l + 1)]  # 20 30 40  1
+```
+
+模型输入 `x`，输出每个位置的 logits。第 1 个位置的 logits 在看过 `10` 后预测 `20`；第 2 个位置的 logits 在看过 `10,20` 后预测 `30`；依此类推。训练时把 logits 的形状整理成 $[B,Vocab,Seq]$，交叉熵在 `Seq` 维上逐位置计算，`y` 就是每个位置的正确下一个 token。
+
+`ignore_index = pad_idx` 让填充位置的损失不参与平均。否则模型会被大量 `<PAD>` 目标主导，学成“永远预测 padding”。注意：`ignore_index` 只忽略目标为 `pad_idx` 的位置，不会自动忽略输入中的 padding；输入侧的 mask 仍需单独处理。
+
+（d）温度 softmax。
+
+对 $z=(2,1,0)$：
+
+| 温度 $T$ | softmax 概率 |
+| ---: | :--- |
+| 0.5 | `0.866813, 0.117310, 0.015876` |
+| 1.0 | `0.665241, 0.244728, 0.090031` |
+| 2.0 | `0.506480, 0.307196, 0.186324` |
+
+```r
+z <- torch_tensor(c(2, 1, 0))
+for (tt in c(0.5, 1, 2)) {
+  print(nnf_softmax(z / tt, dim = -1))
+}
+```
+
+当 $T\to0^+$，$z_i/T$ 的差距被放大，最大项的概率趋于 1，其余趋于 0，接近贪婪；当 $T\to\infty$，所有 $z_i/T\to0$，概率趋于均匀分布 $1/3$。对固定的 $T>0$，除以正数不改变大小顺序，所以 argmax 不变；温度改变的是分布的陡峭程度和采样时的随机性，不是最大概率对应的 token。
+
+`torch_argmax` 是确定性地取最大 logit 的下标；`torch_multinomial` 按概率分布随机抽样，即使某个词概率较低也可能被选中。书中 `temp = 0.1` 是“接近贪婪”的采样，而不是严格的 argmax；严格贪婪应使用 `torch_argmax`，且不能把温度设为 0（会除以 0）。
+
+:::
+
+### 练习 6：QuerySuggestGPT 的参数量与 LoRA 节省
+
+书中的 `QuerySuggestGPT` 配置为：`vocab_size = 5003`、`d_model = 256`、`nhead = 4`、`num_layers = 2`、`max_len = 32`、`dim_feedforward = 256`。
+
+- （a） 计算 token embedding、position embedding、每个 Transformer 编码器层、输出头的参数量，以及总参数量。词表相关部分（token embedding + position embedding + 输出头）占比多少？
+- （b） 对 FFN 的 `linear1`、`linear2`（每层各一个）和输出层 `fc_out` 注入 LoRA，取 $r=8$、`lora_alpha=16`。计算每处 $A,B$ 的参数量、总可训练参数，以及可训练参数占整个模型的比例。
+- （c） 书中打印的示例是“总参数: 4237283 | 可训练参数: 83032 | 训练比例: 1.960%”。按你上面的计算核对：哪些数字对得上、哪些对不上？`83032` 对应的是哪种注入范围？如果只按书中展示的代码（FFN + `fc_out`），正确的输出应该是什么？
+- （d） 为什么 LoRA 把 $B$ 初始化为 0？如果 $A,B$ 都初始化为 0 会怎样？`merge()` 前后输出为什么应当一致？
+
+:::{.callout-note collapse="true"}
+
+# 练习 6 参考答案
+
+（a）基础模型参数量。
+
+| 组件 | 计算 | 参数量 |
+| :--- | :--- | ---: |
+| Token embedding | $5003\times256$ | 1,280,768 |
+| Position embedding | $32\times256$ | 8,192 |
+| 每层多头注意力 | $4(256^2+256)$ | 263,168 |
+| 每层 FFN | $2\cdot256\cdot256+256+256$ | 131,584 |
+| 每层 LayerNorm ×2 | $2\times(2\cdot256)$ | 1,024 |
+| 每层小计 | | 395,776 |
+| 2 层编码器 | $2\times395{,}776$ | 791,552 |
+| 输出头 | $256\times5003+5003$ | 1,285,771 |
+| 总计 | | 3,366,283 |
+
+词表相关部分：
+
+$$
+1{,}280{,}768+8{,}192+1{,}285{,}771=2{,}574{,}731,
+$$
+
+占
+
+$$
+\frac{2{,}574{,}731}{3{,}366{,}283}\approx0.7649,
+$$
+
+即约 76.5%，与书中“76% 用于查字典”的叙述一致。
+
+（b）LoRA 参数量。
+
+LoRA 把增量写成 $\Delta W=BA$，其中 $A\in\mathbb{R}^{r\times d_{in}}$，$B\in\mathbb{R}^{d_{out}\times r}$。
+
+- 每个 $256\to256$ 的 FFN 线性层：
+  $$
+  A:\ 8\times256=2{,}048,\qquad
+  B:\ 256\times8=2{,}048,
+  $$
+  合计 4,096。
+- 2 层 × 每层 2 个 FFN 线性层：$2\times2\times4{,}096=16{,}384$。
+- 输出层 $256\to5003$：
+  $$
+  A:\ 8\times256=2{,}048,\qquad
+  B:\ 5003\times8=40{,}024,
+  $$
+  合计 42,072。
+
+总可训练参数：
+
+$$
+16{,}384+42{,}072=\mathbf{58{,}456}.
+$$
+
+模型总参数：
+
+$$
+3{,}366{,}283+58{,}456=3{,}424{,}739.
+$$
+
+可训练比例：
+
+$$
+\frac{58{,}456}{3{,}424{,}739}\approx0.01707=1.707\%.
+$$
+
+相对全量微调的 $3{,}366{,}283$ 个参数，LoRA 只训练约 $1.736\%$，减少了约 $98.26\%$。
+
+（c）核对书中的输出。
+
+书中示例：
+
+```text
+总参数: 4237283 | 可训练参数: 83032 | 训练比例: 1.960%
+```
+
+按书中展示的注入代码（每层 `linear1`、`linear2`，再加 `fc_out`），实际应为：
+
+```text
+总参数: 3424739 | 可训练参数: 58456 | 训练比例: 1.707%
+```
+
+`83032` 恰好等于 $58{,}456+24{,}576$。多出来的 24,576 是也给注意力层的 `in_proj` 和 `out_proj` 注入 LoRA 的参数：
+
+- 每层 `in_proj`（$256\to768$）：$A=8\times256=2{,}048$，$B=768\times8=6{,}144$，合计 8,192；
+- 每层 `out_proj`（$256\to256$）：4,096；
+- 每层合计 12,288，两层 24,576。
+
+但即使把注意力也注入，总参数是 $3{,}366{,}283+83{,}032=3{,}449{,}315$，比例约 $2.407\%$，仍然不是书中的 4,237,283 / 1.960%。因此这组打印值无法由书中展示的架构复现，较可能是旧版本的输出或排版时混入了别的配置。实际写作/复现时应以当前代码的 `print_trainable_params()` 结果为准；若希望书中的 83,032 成立，需要把注入范围扩展到注意力层，并同步修正总参数。
+
+（d）LoRA 初始化与合并。
+
+前向为
+
+$$
+h=W_0x+\frac{\alpha}{r}BAx.
+$$
+
+若 $B=0$，则 $BA=0$，初始时 $h=W_0x$，与预训练模型完全一致，不会在第一步引入随机扰动。反向传播时，$\partial L/\partial B$ 通常非零（因为 $Ax\neq0$），$B$ 开始更新；随后 $A$ 也会获得梯度。若 $A=B=0$，两条路径的梯度都为 0，模型永远学不到东西——这才是必须避免的情况。标准做法是 $A$ 随机、$B$ 为零；若反过来 $A=0$、$B$ 随机，初始输出也等于 $W_0x$，梯度会先更新 $A$，理论上也能训练，但不是 LoRA 的常规初始化。
+
+`merge()` 计算 $\Delta W=BA\cdot\alpha/r$，原地加到 $W_0$ 上。合并前
+
+$$
+h=W_0x+\frac{\alpha}{r}BAx,
+$$
+
+合并后
+
+$$
+h=(W_0+\frac{\alpha}{r}BA)x,
+$$
+
+两者在数学上完全相同。实测（小线性层，float32）合并前后最大误差约 $2.4\times10^{-7}$，只是浮点舍入。
+
+:::
+
+## 三、开放思考
+
+### 练习 7：表格 Transformer、`[CLS]` 与注意力解释
+
+书中的表格 Transformer 把每一列特征当作一个 token：$[B,F]\to[B,F,1]\to[B,F,D]$，再拼接 `[CLS]`，经过若干层自注意力后取第一个位置做预测。
+
+请讨论：
+
+- （a） 为什么表格特征要用“每个特征独立的投影”，而不能像词嵌入那样共享一个线性层？`feature_emb` 的作用是什么？如果去掉它，把列的顺序打乱会怎样？
+- （b） `[CLS]` 的输出为什么能代表整个样本？把 `[CLS]` 行的注意力权重直接当作“特征重要性”有哪些风险？请至少列出三条，并给出一种更稳健的归因方法。
+- （c） 在 Ames 房价这种样本量约两千、特征约一百的表格任务上，Transformer 一定比 MLP 好吗？什么情况下值得用 Transformer，什么情况下树模型/MLP 更合适？
+- （d） ALiBi 与可学习位置编码相比，外推能力为什么更强？它的偏差和代价是什么？
+- （e） LoRA 的秩 $r$、`lora_alpha`、注入层选择分别如何影响容量、稳定性和灾难性遗忘？如果领域差异很大，$r$ 应该调大还是调小？
+
+:::{.callout-note collapse="true"}
+
+# 练习 7 参考答案
+
+（a）独立投影与特征身份。
+
+表格的列是异质的：面积是连续的正数，年份是时间刻度，类别编码是离散的，量纲和分布都不同。共享一个 $D\times F$ 的线性层会让所有列共用同一组权重，相当于强行假设“第 1 列和第 2 列的特征语义相同”，既不合理，也会让不同尺度的特征互相干扰。独立投影给每一列自己的 $W_f\in\mathbb{R}^{D}$ 和 $b_f\in\mathbb{R}^{D}$，等价于
+
+$$
+t_f=x_f\cdot W_f+b_f,\qquad f=1,\dots,F,
+$$
+
+把每个标量特征映射到自己的 $D$ 维 token。
+
+`feature_emb` 是形状 $[1,F,D]$ 的可学习“列身份”向量。自注意力本身对 token 的排列是置换等变的：如果去掉 `feature_emb`，把输入列的顺序打乱，模型输出只会跟着置换，无法知道“当前 token 是面积还是年份”。加上 `feature_emb` 后，每个位置都有一个固定的身份编码，列的顺序（以及列的含义）才被区分开。注意：如果训练和推理时列顺序不一致，`feature_emb` 也会错位，所以表格 Transformer 对特征列顺序的稳定性有要求。
+
+（b）`[CLS]` 与注意力解释的边界。
+
+`[CLS]` 是一个可学习的 token，放在序列最前面；经过多层自注意力，它和所有特征 token 交互，最后一层的 `[CLS]` 向量被视为全局表示。分类/回归头只读这个向量，因此它必须学会把对任务有用的信息汇聚进来。
+
+把 `[CLS]` 行的注意力权重当作特征重要性，至少有这些风险：
+
+1. 注意力不是因果贡献。 注意力权重只说明“在哪里取信息”，不说明“取到后对输出改变了多少”。一个特征可能被高度关注，但因为 Value 投影或后续 FFN 的作用，对最终预测影响很小；反之亦然。
+2. softmax 归一化与竞争效应。 同一行的权重和为 1，特征之间是零和的。两个高度相关的特征可能互相分流注意力，单个权重看起来都不大，但联合贡献很大。
+3. 多层、多头与残差。 书中展示的通常只是某一层、经头平均后的矩阵；不同层/头关注不同模式，残差连接和 FFN 还会继续混合信息。单层单头权重不能代表整个模型。
+4. 样本依赖性。 注意力是输入的函数，不同样本的权重不同；不能用少数样本的权重概括全局特征重要性。
+
+更稳健的归因方法包括：permutation importance（打乱某列看验证误差上升多少）、ablation（把某列置为均值/缺失）、gradient×input、Integrated Gradients、Shapley 值，以及 attention rollout 等多层聚合方法。它们也各有假设，最好交叉验证。
+
+（c）表格任务上的取舍。
+
+不一定。Ames 这类任务样本量约 2344、特征约 95（取决于是否删除经纬度），信噪比有限；Transformer 的参数量和灵活性都很高，若没有足够的正则、早停和调参，很容易过拟合。另一方面，Transformer 的注意力确实能自动建模特征间交互，在特征异质、交互复杂、样本量较大时可能超过 MLP。实际选择应看：
+
+- 样本量与特征数：小样本优先线性/树模型/强正则 MLP；大样本且交互复杂时再考虑 Transformer。
+- 特征类型：大量类别特征、缺失值、异构量纲时，树模型（GBDT）通常非常强；Transformer 需要仔细的 tokenizer、缺失值编码和特征身份编码。
+- 调参成本与部署：Transformer 的训练/推理成本更高，可解释性工具也更复杂。
+- 基线：至少与 MLP、GBDT、线性模型在同一个 CV 切分上比较，不能只看一次测试集 RMSE。
+
+书中的表格 Transformer 在特定管线下降到了更低的 RMSE，但这只是一个数据点，不足以证明“Transformer 在所有表格任务上优于 MLP”。
+
+（d）ALiBi 的外推。
+
+ALiBi 不把位置向量加到 token 上，而是直接在注意力分数上加一个与距离成正比的偏置：
+
+$$
+\text{score}_{ij}\leftarrow \text{score}_{ij}-m_h\cdot|i-j|,
+$$
+
+其中 $m_h$ 是每个头固定的斜率（书中用 $2^{-8h/H}$ 一类的几何序列）。距离越远，惩罚越大，模型被鼓励关注近邻。由于偏置是距离的连续函数，推理时序列比训练时更长也能直接计算，不需要“位置表”里不存在的行；这就是它相对可学习位置编码的外推优势。
+
+代价是强烈的局部性归纳偏置：如果任务真的需要很长距离的精确依赖，固定的距离惩罚可能限制模型；斜率的选择也需要与头数和数据匹配。ALiBi 并没有解决注意力的 $O(T^2)$ 复杂度，也没有让模型自动理解绝对位置，只是把相对距离以一种简单的方式注入。
+
+（e）LoRA 的容量与注入层。
+
+- 秩 $r$：控制低秩更新的容量。$r$ 越大，$A,B$ 的参数越多，能表达的 $\Delta W$ 越丰富，但也更容易过拟合、显存更高。领域差异大、数据多时可以适当增大 $r$；任务简单或数据少时 $r=4$ 或 $8$ 往往足够。
+- `lora_alpha`：缩放因子为 $\alpha/r$。增大 $\alpha$ 会放大 LoRA 分支的有效更新，相当于提高该分支的学习率/初始步长；它不改变参数量，但会影响训练稳定性。常见做法是固定 $\alpha$ 与 $r$ 的比例，或把 $\alpha$ 当作独立超参。
+- 注入层：只注入 `fc_out` 容量很小，但可能不足以适配领域；注入 FFN 和注意力（Q/K/V/O）容量更大，也更接近原论文的默认配置。注入层越多，可训练参数越多，灾难性遗忘的风险也越高（尽管冻结主干已经大幅降低了遗忘）。
+- 灾难性遗忘：LoRA 只更新低秩增量，主干冻结，通常比全量微调更不容易遗忘；但如果 $r$ 很大、学习率很高、领域数据很窄，仍然可能把输出分布拉偏。应保留通用验证集，比较微调前后的通用能力。
+
+:::
+
+## 四、纠错与陷阱
+
+### 练习 8：形状、索引与初始化陷阱
+
+下面的代码/说法都来自本章或与之密切相关的实现细节。请逐条判断哪里会出错，并给出修正。
+
+- （a） R torch 中 `torch_tensor(1:5)$unsqueeze(1)` 和 `torch_randn(32,8)$unsqueeze(1)` 的形状分别是什么？这与 Python PyTorch 的 `unsqueeze(1)` 有什么不同？书中 GPT 的 `pos <- self$pos_idx[1:seq_len]$unsqueeze(1)` 为什么是正确的？
+- （b） 书中 GPT 的 `forward()` 返回 `[B, Vocab, Seq]`。推理摘录里写 `last_logits <- logits[, logits$size(2), ]`，然后对 `last_logits` 做 softmax 并 `torch_multinomial`。这会发生什么？正确写法是什么？配套脚本 `code/9_Words_Suggestion.R` 为什么能工作？
+- （c） 因果掩码写成 `torch_triu(torch_full(c(L,L), -Inf), diagonal = 1)`。哪些元素是 0、哪些是 $-\infty$？如果把 `diagonal` 改成 0 会怎样？如果忘记 `-Inf`、直接用 0 初始化会怎样？布尔掩码中 `TRUE` 表示“允许”还是“屏蔽”？
+- （d） LoRA 中“把 $B$ 初始化为 0”是必须的吗？如果 $A,B$ 都初始化为 0 会怎样？如果 $A=0$、$B$ 随机呢？`merge()` 前后输出为什么应当一致？
+
+:::{.callout-note collapse="true"}
+
+# 练习 8 参考答案
+
+（a）R 与 Python 的 `unsqueeze`。
+
+```r
+torch_tensor(1:5)$unsqueeze(1)$shape          # 1 x 5
+torch_tensor(1:5)$unsqueeze(2)$shape          # 5 x 1
+torch_randn(32, 8)$unsqueeze(1)$shape         # 1 x 32 x 8
+torch_randn(32, 8)$unsqueeze(2)$shape         # 32 x 1 x 8
+```
+
+R torch 的 `unsqueeze(dim)` 把新维度插在第 `dim` 个位置之前（1 表示最前面）；Python PyTorch 的 `unsqueeze(dim)` 使用 0-based 轴编号，`unsqueeze(1)` 是在第 1 轴之后插入。因此同一个 `unsqueeze(1)`：
+
+```text
+R:        [5] -> [1,5]        [32,8] -> [1,32,8]
+Python:   [5] -> [5,1]        [32,8] -> [32,1,8]
+```
+
+书中 `pos_idx[1:seq_len]` 是长度 `seq_len` 的一维张量，`unsqueeze(1)` 得到 `[1, seq_len]`，再过 `nn_embedding` 得到 `[1, seq_len, D]`；它与 `[B, seq_len, D]` 相加时，batch 维自动广播，位置维正常对齐。这是正确的。若按 Python 习惯改成 `[seq_len,1]`，得到的 `[seq_len,1,D]` 只有在 `B == seq_len` 时才“碰巧”能广播，而且每个样本会拿到一整套位置向量，语义完全错了；`B != seq_len` 时会直接报维度不匹配。
+
+顺带一提，R torch 的 `nn_embedding` 也是 1-based 索引：`nn_embedding(5,3,padding_idx=1)` 会把第 1 行置零，输入索引 1 取第 1 行。Python 则是 0-based。这就是书中 `pad_idx = 1`、`torch_arange(1, max_len)` 能工作的原因；移植到 Python 时不能照抄这些数字。
+
+（b）logits 切片。
+
+`logits` 的形状是 $[B,Vocab,Seq]$，`logits$size(2)` 是 Vocab（5003），不是时间步数。因此
+
+```r
+last_logits <- logits[, logits$size(2), ]
+```
+
+是在第 2 维（词表维）上取第 5003 个元素，结果形状是 $[B,Seq]$（例如 $[1,32]$）。接着 `nnf_softmax(last_logits, dim = -1)` 是在 时间维 上做 softmax，`torch_multinomial` 采样出来的是 1 到 32 之间的“时间位置”，不是词表 token。模型不会报错，但生成结果毫无意义。
+
+正确写法是取最后一个时间步、保留词表维：
+
+```r
+last_logits <- logits[, , logits$size(3)]   # [B, Vocab]
+```
+
+或者先把 logits 转成 $[B,Seq,Vocab]$，再按第 2 维取最后一步：
+
+```r
+logits <- logits$transpose(2, 3)            # [B, Seq, Vocab]
+last_logits <- logits[, logits$size(2), ]   # [B, Vocab]
+```
+
+配套脚本 `code/9_Words_Suggestion.R:193` 正是先做了 `logits <- logits$transpose(2, 3)`，所以它的 `[, logits$size(2), ]` 是对的。书中推理小节的代码摘录省略了这行转置，单独照抄会得到错误结果；这是“摘录与完整脚本不一致”的典型陷阱。
+
+（c）掩码方向。
+
+`torch_triu(..., diagonal = 1)` 把严格上三角设为 $-\infty$，下三角和对角线保持 0：
+
+```text
+ 0  -Inf -Inf -Inf -Inf
+ 0    0  -Inf -Inf -Inf
+ 0    0    0  -Inf -Inf
+ 0    0    0    0  -Inf
+ 0    0    0    0    0
+```
+
+加到 scores 上后，$-\infty$ 的位置 softmax 权重为 0，0 的位置保持原分数。`diagonal = 1` 保留对角线，所以每个位置能看见自己；改成 `diagonal = 0` 会把对角线也设为 $-\infty$，第 $i$ 个位置连自己都看不见，通常不是因果语言模型想要的（虽然某些特殊结构可能允许，但标准 GPT 不允许）。
+
+如果忘记 `-Inf`、用全 0 初始化，`torch_triu` 仍然是全 0，等于没有掩码，模型会偷看未来。布尔掩码的语义要小心：在 PyTorch/R torch 的 `nn_multihead_attention` 中，`attn_mask` 为布尔张量时 `TRUE` 表示屏蔽（不允许注意），`FALSE` 表示允许；这与“TRUE 表示允许”的直觉相反。最稳妥的做法是像书中一样用加性浮点掩码（0 允许、$-\infty$ 屏蔽），或者先写一个小例子验证布尔语义。
+
+（d）LoRA 初始化。
+
+标准 LoRA 初始化是 $A$ 随机、$B=0$。这样初始 $\Delta W=BA=0$，模型输出与预训练模型完全一致（实测最大差 0）。反向传播时：
+
+- $\partial L/\partial B$ 一般非零（因为 $Ax\neq0$），$B$ 先更新；
+- 之后 $A$ 也会获得梯度。
+
+如果 $A=B=0$，则 $Ax=0$ 且 $B^\top(\cdot)=0$，两条路径的梯度都为 0，$A,B$ 永远不动，LoRA 完全失效。如果 $A=0$、$B$ 随机，初始输出仍然等于 $W_0x$，但 $\partial L/\partial B=0$、$\partial L/\partial A\neq0$，训练会先更新 $A$；理论上也能走通，但不是 LoRA 的常规做法，且第一步的梯度信号较弱。
+
+所以“$B$ 必须为 0”更准确的说法是：不要让 $A,B$ 同时为 0；标准做法是 $B=0$、$A$ 随机。`merge()` 前后输出一致，是因为它把 $\frac{\alpha}{r}BA$ 原地加到 $W_0$ 上，代数上只是把两项合并；实测 float32 误差约 $2.4\times10^{-7}$。
+
+:::
+
+---
+
+## 本章速查
+
+| 主题 | 关键结论 |
+| :--- | :--- |
+| 缩放点积注意力 | scores/weights $[B,T,S]$，输出 $[B,T,d_v]$；时间 $O(BTSd)$，显存 $O(BTS)$ |
+| 缩放 | $\operatorname{Var}(q\cdot k)=d_k$；除以 $\sqrt{d_k}$ 后方差约为 1，避免 softmax 饱和 |
+| 多头 | 参数量不随头数增加；$D$ 必须能被 $h$ 整除；拼接前要 `contiguous()` |
+| 位置编码 | 纯自注意力置换等变；加法注入 $[B,T,D]$，可学习表参数量 $max\_len\times D$ |
+| 因果掩码 | 上三角 $-\infty$、下三角含对角线 0；`diagonal=1` 保留自身 |
+| 下一词 | 输入 `x = seq[1:L]`，目标 `y = seq[2:(L+1)]`；输出常整理为 $[B,Vocab,Seq]$ |
+| QuerySuggestGPT | 总参数 3,366,283；词表相关部分约 76.5% |
+| LoRA（FFN + 输出层，$r=8$） | 可训练 58,456；总参数 3,424,739；比例约 1.707% |
+| 温度 | $p_i\propto e^{z_i/T}$；$T\to0$ 接近贪婪，$T\to\infty$ 接近均匀 |
+
