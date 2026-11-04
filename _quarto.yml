@@ -33,7 +33,7 @@ format:
     theme: united
     css: theme.css
     toc: true
-    toc-depth: 3
+    toc-depth: 1
     toc-title: "本页目录"
     number-sections: false
     code-fold: false
