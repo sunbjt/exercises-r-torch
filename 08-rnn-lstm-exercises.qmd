@@ -478,7 +478,6 @@ lengths <- c(3L, 2L, 1L)
 - （a） 打印 `output` 和 `h_n` 的形状。对每条序列，比较 `h_n[1, i, ]` 与 `output[i, lengths[i], ]`，差值分别是多少？为什么短序列的 `h_n` 不等于最后一个有效 token 的输出？
 - （b） 分别计算“对所有 3 个时间步求平均”和“只对有效 token 求平均”的句向量，比较第 2、3 条序列的差异。哪种做法更合理？
 - （c） 一个常见写法是先乘 mask 再除以固定的 $T=3$。这与按真实长度求平均差多少？如果序列长度分布很偏，会带来什么偏差？
-- （d） Packing 本应解决填充计算和污染问题。请实际运行书中的 `nn_utils_rnn_pack_padded_sequence()` + `nn_lstm()` 组合，观察当前 torch 0.17.0 的行为。若不可用，应该用什么替代？
 
 :::{.callout-note collapse="true"}
 
@@ -565,28 +564,6 @@ mean_wrong <- (output * mask$unsqueeze(3))$sum(dim = 2) / 3
 ```
 
 与 `mean_valid` 的差：第 2 条约 $0.0396$，第 3 条约 $0.1111$。因为分母用了 3 而不是真实长度，短序列的向量被整体缩小；序列越短，缩小越严重。若数据中短文本占比高，模型会学到“长度越短、向量越小”的伪相关，而不是语义。
-
-（d）Packing 在当前 R torch 中的行为。
-
-```r
-packed <- nn_utils_rnn_pack_padded_sequence(
-  emb(padded), lengths, batch_first = TRUE, enforce_sorted = TRUE
-)
-class(packed)
-# [1] "PackedSequence" "R6"
-
-lstm(packed)
-# Error: Expected a proper Tensor but got None
-# (or an undefined Tensor in C++) for argument #0 'self'
-```
-
-`PackedSequence` 对象可以构造出来，但 torch 0.17.0 的 `nn_lstm()`（以及 `nn_rnn()`、`nn_gru()`）不接受它，R 层的 `forward` 仍按普通张量处理。因此书中的 Packing 前向传播在当前环境无法直接复现。
-
-替代方案：
-
-1. Padding + mask：如本题，计算量没有省，但结果正确；这是当前 R torch 最稳妥的做法。
-2. 手写循环：按时间步处理，跳过超过该序列长度的位置；灵活但慢。
-3. 等待/升级 API：如果后续 torch 版本支持 `PackedSequence`，再改回 packing；升级后请先跑最小例子确认。
 
 :::
 
