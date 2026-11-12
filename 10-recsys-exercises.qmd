@@ -1008,11 +1008,8 @@ R torch 的 `nn_embedding` 是 1-based 索引，传入超出 `[1, num_embeddings
   nn_init_normal_(self$item_emb$weight, mean = 0, std = 0.02)
   ```
   然后 `key_padding_mask <- (log_seqs == 1)`。`nn_init_normal_` 之后，padding 行还是 0 吗？这会影响指标吗？应该怎么改？
-- （b） 正文写“使用 `nn_transformer_decoder_layer`”，但配套脚本用的是 `nn_transformer_encoder_layer`。在 torch 0.17.0 中，`nn_transformer_decoder_layer` 存在吗？应该怎么表述？
-- （c） 正文说 SASRec 的 `drop rate` 是 0.1，脚本里 `dropout_rate <- 0.2`。以哪个为准？读者按正文改成 0.1 会怎样？
-- （d） 训练负采样使用 `sample(..., replace = TRUE)`。这会产生重复负样本吗？在 MovieLens 1M 上大概有多少？应该改成什么？
-- （e） 如果 MF 的 `forward` 漏掉 `squeeze(-1)`，输出形状会怎样？为什么代码不报错？
-- （f） 评估代码用 `(topk_indices == 1L)$sum()` 统计命中。这个写法依赖什么前提？如果候选排序变成负样本在前，或者一个用户有多个正样本，会怎样？
+- （b） 训练负采样使用 `sample(..., replace = TRUE)`。这会产生重复负样本吗？在 MovieLens 1M 上大概有多少？应该改成什么？
+- （c） 如果 MF 的 `forward` 漏掉 `squeeze(-1)`，输出形状会怎样？为什么代码不报错？
 
 :::{.callout-note collapse="true"}
 
@@ -1043,37 +1040,7 @@ with_no_grad({
 
 或者自定义初始化，只对第 2 行到最后一行做正态初始化。不要依赖 `padding_idx` 在后续初始化后仍然保持零。
 
-（b）`nn_transformer_decoder_layer` 不存在。
-
-在 torch 0.17.0 中：
-
-```r
-exists("nn_transformer_decoder_layer")  # FALSE
-exists("nn_transformer_encoder_layer")  # TRUE
-grep("transformer", getNamespaceExports("torch"), value = TRUE)
-# "nn_transformer_encoder_layer" "nn_transformer_encoder"
-```
-
-R torch 0.17.0 只导出 encoder 相关 API，没有 decoder layer/decoder。本章 SASRec 脚本实际使用的是：
-
-```r
-encoder_layer <- nn_transformer_encoder_layer(...)
-self$transformer <- nn_transformer_encoder(encoder_layer, num_layers = num_blocks)
-```
-
-再传入 causal mask。第 9 章也明确说过：`nn_transformer_encoder_layer` + causal mask 在数学上等价于 GPT 的 decoder block。因此正文应改为“使用 `nn_transformer_encoder_layer` 堆叠成 `nn_transformer_encoder`，并传入 causal mask”；如果确实需要 decoder API，得自行实现或确认升级后的 torch 版本是否提供。
-
-（c）dropout 配置不一致。
-
-正文第 569 行说 “drop rate 为 0.1”，但 `code/10_SASrec.R` 中：
-
-```r
-dropout_rate <- 0.2
-```
-
-`nn_dropout(dropout_rate)` 和 `nn_transformer_encoder_layer(dropout = dropout_rate)` 都用 0.2。书中 40 轮训练输出和 0.8647 应来自脚本的 0.2；如果读者按正文改成 0.1，结果不会与书中输出一致。修复：把正文改为 0.2；若要保留 0.1，需要把脚本和所有指标一起重跑并更新。
-
-（d）`replace = TRUE` 的重复负样本。
+（b）`replace = TRUE` 的重复负样本。
 
 ```r
 dt_train_neg <- train_counts[, .(
@@ -1096,7 +1063,7 @@ sample(setdiff(...), pos_count, replace = FALSE)
 
 MovieLens 1M 的物品库远大于单个用户的 pos_count，`replace = FALSE` 可行；如果某些用户的历史几乎覆盖全库，才需要回退到有放回并去重，或限制负样本数。
 
-（e）漏掉 `squeeze(-1)` 的广播。
+（c）漏掉 `squeeze(-1)` 的广播。
 
 `dot_product` 是 $[B]$，`u_b` 和 `i_b` 是 $[B,1]$。R torch 把 $[B]$ 当作 $[1,B]$，与 $[B,1]$ 广播成 $[B,B]$：
 
@@ -1110,60 +1077,5 @@ a + b
 
 输出变成矩阵后，BCE 会把 $B^2$ 个元素都当成独立样本，loss 和梯度都不再是原来的逐样本损失。代码不报错，是因为形状在广播规则下“合法”，但语义已经错了。修复：`squeeze(-1)`，或 `$view(c(B))`。
 
-（f）评估索引假设。
-
-`(topk_indices == 1L)$sum()` 依赖两个前提：
-
-1. 每个用户的候选集里，正样本恰好排在第 1 列；
-2. 每个用户只有一个正样本。
-
-本章通过
-
-```r
-dt_eval <- rbindlist(list(dt_eval_pos, dt_eval_neg), use.names = TRUE)
-setorder(dt_eval, user_idx, -label)
-```
-
-保证正样本在前：`-label` 降序，1 在 0 前面；随后按用户分组收集候选时保留了行序。如果改成 `setorder(dt_eval, user_idx, label)`（升序），负样本在前，正样本在第 100 列，`topk_indices == 1L` 检查的是某个负样本，指标会完全错误。如果一个用户有多个正样本，`sum(topk_indices == 1L)` 只检查第 1 列，会漏掉其他正样本。
-
-修复：不要依赖列位置，显式携带每个候选的 label，按用户取出 top-k 对应的标签：
-
-```r
-# scores: [B, C]；candidate_labels: [B, C]，正样本为 1
-topk_indices <- torch_topk(scores, k, dim = 2, largest = TRUE,
-                           sorted = TRUE)[[2]]       # [B, K]
-topk_labels <- candidate_labels$gather(dim = 2, index = topk_indices)  # [B, K]
-hit <- topk_labels$sum(dim = 2) > 0                  # [B]，是否至少命中一个正样本
-```
-
-这样即使排序变化、或有多个正样本，也不会错。若要做严格的 Recall@K（多正样本），还可以用 `topk_labels$sum(dim = 2) / candidate_labels$sum(dim = 2)` 逐用户计算命中比例。
-
-补充：`HR@10` 与 `Recall@10` 的命名。
-
-本章 MF/双塔用 `HR@10`，SASRec 输出用 `Recall@10`。在每个用户只有一个正样本的设置下，两者数值相同：
-
-$$
-\text{HR@}K=\text{Recall@}K=\frac{1}{U}\sum_{u=1}^U \mathbf 1[\text{正样本}\in \text{Top-}K_u].
-$$
-
-所以这不是数值错误，但同一章里最好统一叫法；如果将来一个用户有多个正样本，HR（是否至少命中一个）和 Recall（命中比例）就会分叉，必须在文中说明。
-
 :::
 
----
-
-## 附：本章关键数字速查
-
-| 项目 | 数值 |
-| :--- | :--- |
-| MovieLens 1M 用户 / 物品 / 评分 | 6040 / 3706 / 1,000,209 |
-| MF 参数量（$d=32$，含偏置） | 321,619 |
-| MF 参数量（不含偏置） | 311,872 |
-| 纯 ID 双塔参数量 | 320,256 |
-| 带特征双塔参数量 | 322,688 |
-| 测试集每个用户的平均交互条数（过滤冷启动后） | 33.51 |
-| `.SD[1]` 与 `.SD[.N]` 正样本不同的用户 | 6040 / 6040（100%） |
-| 训练负样本重复行占比 | 4.88% |
-| 负样本池中的冷启动物品 | 39 个（约 1.05%） |
-| 随机打分器 `HR@10` 期望 | 0.1 |
-| SASRec 负采样假负样本概率 | $1/3706\approx0.027\%$ |
